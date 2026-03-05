@@ -7892,47 +7892,45 @@ export class SharedAdmissionFormComponent implements OnInit {
 
       } else {
 
-        if (ext.toUpperCase() == 'PDF') {
-          let fileList: FileList = event.target.files;
-          let file: File = fileList[0];
-
-          // Open Document Upload Dialog for AI Verification and Extraction
-          const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
-            width: '600px',
-            disableClose: true,
-            data: {
-              document_name: documents['controls'].docTitle.value,
-              document_id: documents['controls'].docId.value,
-              file: file
-            }
-          });
-
-          dialogRef.afterClosed().subscribe(result => {
-            if (result && result.success) {
-              // Proceed with upload and patching
-              console.log('Dialog success, uploading file and patching data...');
-              this.browsedDocData(result.file, docIndex, bunchIndex, 'PDF'); // Uploads the file
-
-              // If data was extracted, auto-fill the form
-              if (result.extractedData) {
-                this.patchExtractedData(result.extractedData, result.document_id);
-              }
-            } else {
-              // User cancelled or verification failed
-              console.log('Dialog cancelled or failed');
-              documents['controls'].isBrowsed.setValue(false);
-              event.target.value = ''; // Reset file input
-            }
-          });
-
-        } else {
-          let postParam = {
-            'mode': 'documents',
-            'docIndex': docIndex,
-            'bunchIndex': bunchIndex,
+        // Open Document Upload Dialog for AI Verification and Extraction (for both PDF and images)
+        const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
+          width: '600px',
+          disableClose: true,
+          data: {
+            document_name: documents['controls'].docTitle.value,
+            document_id: documents['controls'].docId.value,
+            file: file
           }
-          this.openImageCropperDialog(event, postParam);
-        }
+        });
+
+        dialogRef.afterClosed().subscribe(result => {
+          if (result && result.success) {
+            console.log('Dialog success, uploading file and patching data...');
+
+            if (ext.toUpperCase() == 'PDF') {
+              this.browsedDocData(result.file, docIndex, bunchIndex, 'PDF');
+            } else {
+              // For images - pass to the original cropper with the verified file
+              let postParam = {
+                mode: 'documents',
+                docIndex: docIndex,
+                bunchIndex: bunchIndex,
+              }
+              // Recreate a synthetic event with the verified file for the cropper
+              this.openImageCropperDialog(event, postParam);
+            }
+
+            // If data was extracted, auto-fill the form
+            if (result.extractedData) {
+              this.patchExtractedData(result.extractedData, result.document_id);
+            }
+          } else {
+            // User cancelled or verification failed
+            console.log('Dialog cancelled or failed');
+            documents['controls'].isBrowsed.setValue(false);
+            event.target.value = ''; // Reset file input
+          }
+        });
       }
     }
   }
