@@ -142,7 +142,12 @@ Rules:
   - If 2 words: lastName = first, firstName = second, middleName = ''
 - Do not leave firstName/middleName/lastName empty if candidateName is filled`;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash",
+        generationConfig: {
+            responseMimeType: "application/json"
+        }
+    });
     const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
 
     const MAX_RETRIES = 3;
@@ -156,6 +161,9 @@ Rules:
             console.log(content);
             console.log("-----------------------------");
 
+            // With responseMimeType: "application/json", the model should return raw JSON.
+            // However, older models or unexpected responses might still wrap it.
+            // This parsing logic is kept for robustness.
             if (content.includes('\`\`\`json')) content = content.split('\`\`\`json')[1].split('\`\`\`')[0].trim();
             else if (content.includes('\`\`\`')) content = content.split('\`\`\`')[1].split('\`\`\`')[0].trim();
 
@@ -288,7 +296,12 @@ app.post('/api/validate-photo', uploadMiddleware, async (req, res) => {
         const mimeType = req.file.mimetype || 'image/jpeg';
         const base64Image = imageBuffer.toString('base64');
 
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        const model = genAI.getGenerativeModel({
+            model: "gemini-2.5-flash",
+            generationConfig: {
+                responseMimeType: "application/json"
+            }
+        });
         const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
 
         const prompt = `You are strict AI auditor validating a passport-size photo for an Indian college admission form.
@@ -313,8 +326,8 @@ Return ONLY a JSON object (no markdown, no explanation):
 }`;
 
         const result = await model.generateContent([prompt, imagePart]);
-        const raw = result.response.text().trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
-        const parsed = JSON.parse(raw);
+        const responseText = result.response.text();
+        const parsed = JSON.parse(responseText);
 
         console.log('Photo validation result:', parsed);
         res.json({
