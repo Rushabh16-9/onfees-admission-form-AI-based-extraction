@@ -400,23 +400,16 @@ Return ONLY a JSON object (no markdown, no explanation):
   "errors": ["reason if invalid, empty array if valid"]
 }`;
 
-        const chatCompletion = await groq.chat.completions.create({
-            messages: [
-                {
-                    role: 'user',
-                    content: [
-                        { type: 'text', text: prompt },
-                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
-                    ]
-                }
-            ],
-            model: 'llama-3.2-90b-vision-preview',
-            response_format: { type: "json_object" }
+        const model = genAI.getGenerativeModel({
+            model: "gemini-2.5-flash",
+            generationConfig: {
+                responseMimeType: "application/json"
+            }
         });
+        const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
 
-        let responseText = chatCompletion.choices[0]?.message?.content || "{}";
-        // fallback stripping in case llama vision ignores json_object rule slightly
-        responseText = responseText.trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+        const result = await model.generateContent([prompt, imagePart]);
+        let responseText = result.response.text() || "{}";
         const parsed = JSON.parse(responseText);
 
         console.log('Photo validation result:', parsed);
