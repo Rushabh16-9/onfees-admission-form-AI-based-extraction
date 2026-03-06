@@ -291,18 +291,20 @@ app.post('/api/validate-photo', uploadMiddleware, async (req, res) => {
         const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
 
-        const prompt = `You are validating a passport-size photo for an Indian college admission form.
+        const prompt = `You are strict AI auditor validating a passport-size photo for an Indian college admission form.
 
-Analyze this image and determine if it is a valid passport-size photograph of a human person.
+Analyze this image and determine if it is a valid, high-quality passport-size photograph of a human person.
 
-A VALID photo must:
-- Clearly show a HUMAN FACE (the person's face must be clearly visible)
-- Be a portrait-style photo of a person
+A VALID photo MUST:
+- Clearly show a single HUMAN FACE in focus (the person's face must be clearly visible and well-lit)
+- Be a portrait-style photo of a person (head and shoulders)
+- Be reasonably sharp and not excessively blurry
 
-INVALID examples (MUST reject):
-- Photos of animals, fruits (like apples), food, objects, scenery, documents, text
-- Blank or completely blurred images
-- Group photos where the person is not the clear subject
+INVALID examples (MUST REJECT IMMEDIATELY):
+- Photos of animals, fruits (like apples), food, objects, scenery, documents, text, drawings
+- Blurred, severely out of focus, or dark/unrecognizable images
+- Group photos with multiple people
+- Pictures of a screen or severely distorted images
 
 Return ONLY a JSON object (no markdown, no explanation):
 {
