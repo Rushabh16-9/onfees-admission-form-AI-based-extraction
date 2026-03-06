@@ -7,6 +7,7 @@ import { ConfirmDialogComponent } from 'app-shared-components/confirm-dialog/con
 
 import { ImageCropperDialogComponent } from 'app-shared-components/image-cropper-dialog/image-cropper-dialog.component';
 import { MatLegacyDialog as MatDialog } from '@angular/material/legacy-dialog';
+import { DocumentUploadDialogComponent } from 'app/shared/components/document-upload-dialog/document-upload-dialog.component';
 
 import { AdmissionService } from 'app-shared-services/admission.service';
 import { AtktService } from 'app-shared-services/atkt.service';
@@ -262,14 +263,33 @@ export class UploadDocumentsComponent implements OnInit {
 
       } else {
 
-        if (ext.toUpperCase() == 'PDF') {
-          let fileList: FileList = event.target.files;
-          let file: File = fileList[0];
+        // Open Gemini AI Verification Dialog for ALL file types (PDF and images)
+        const docTitle = this.allDocuments[docIndex]?.controls?.docTitle?.value || '';
+        const docId = this.allDocuments[docIndex]?.controls?.docId?.value;
 
-          this.browsedDocData(fileList, docIndex, bunchIndex, ext);
-        } else {
-          this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
-        }
+        const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
+          width: '600px',
+          disableClose: true,
+          data: {
+            document_name: docTitle,
+            document_id: docId,
+            file: file
+          }
+        });
+
+        dialogRef.afterClosed().subscribe(result => {
+          if (result && result.success) {
+            if (ext.toUpperCase() === 'PDF') {
+              this.browsedDocData(event.target.files, docIndex, bunchIndex, ext);
+            } else {
+              this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
+            }
+          } else {
+            // Rejected or cancelled — reset the file input
+            documents['controls'].isBrowsed.setValue(false);
+            event.target.value = '';
+          }
+        });
       }
     }
   }
