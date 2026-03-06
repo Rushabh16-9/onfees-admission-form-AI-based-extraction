@@ -4,7 +4,9 @@ const axios = require('axios');
 const sharp = require('sharp');
 const cors = require('cors');
 const fs = require('fs').promises;
-const fs = require('fs').promises;
+const path = require('path');
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { createCanvas } = require('canvas');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
