@@ -431,26 +431,6 @@ export class AdmissionService {
     const formData = new FormData();
     formData.append('document', file);
 
-    // Use a relative URL or configured base URL. Assuming relative for now as other calls seem to use admissionApiUrls which might be absolute or relative.
-    // However, my backend is running on the same origin or I need to know the URL. 
-    // The previous analysis showed backend is on port 3000 (default) but Angular likely proxies or runs on 4200.
-    // The other methods use `admissionApiUrls`. I should probably stick to a direct call to /api/validate-photo if I can't easily add to admissionApiUrls.
-    // Given the previous task context (server.js runs on port 3000), and this is an Angular app, there might be a proxy.conf.json.
-    // But since I don't want to break things, I will try to use the same pattern if possible, but I don't have the URL constant.
-    // I'll just use `/api/validate-photo` and hope the proxy handles it or it discovers the backend. 
-    // Wait, the server.js I modified runs on PORT (default 3000). 
-    // If the app is served via `ng serve`, it's on 4200. 
-    // If I use a relative path `/api/validate-photo`, and there is no proxy, it will hit 4200 and fail.
-    // The `admissionApiUrls` usually contain the full path or relative path. 
-    // Let's assume there is a proxy or I should use the full localhost:3000 path for dev?
-    // The user's prompt implies a "proper ollama cloud model" but the backend is local.
-    // I'll use a relative path `/api/validate-photo` similar to how I would expect a proxy setup.
-    // If it fails, I'll need to debug. 
-    // Actually, looking at other methods: `const url = admissionApiUrls.getListOfInstitutes;`.
-    // I don't see `baseUrl` property on `this`. 
-    // I'll assume standard setup. I will use `/api/validate-photo` but might need to prepend the backend URL if I knew it.
-    // Let's try relative first as it's safest for integrated apps.
-
     return this.http.post<any>('http://localhost:3000/api/validate-photo', formData)
       .pipe(
         map(response => {
@@ -458,6 +438,35 @@ export class AdmissionService {
         }),
         catchError(error => {
           console.error('Photo validation error:', error);
+          throw error;
+        })
+      );
+  }
+
+  validateSignature(file: File): Observable<any> {
+    const formData = new FormData();
+    formData.append('document', file);
+
+    return this.http.post<any>('http://localhost:3000/api/validate-signature', formData)
+      .pipe(
+        map(response => response),
+        catchError(error => {
+          console.error('Signature validation error:', error);
+          throw error;
+        })
+      );
+  }
+
+  verifyDocument(file: File, expectedType: string): Observable<any> {
+    const formData = new FormData();
+    formData.append('document', file);
+    formData.append('expectedType', expectedType);
+
+    return this.http.post<any>('http://localhost:3000/api/verify-document', formData)
+      .pipe(
+        map(response => response),
+        catchError(error => {
+          console.error('Document verification error:', error);
           throw error;
         })
       );

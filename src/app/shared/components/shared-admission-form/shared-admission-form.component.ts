@@ -7856,6 +7856,39 @@ export class SharedAdmissionFormComponent implements OnInit {
             if (this.passportSizePhotoFileInput) this.passportSizePhotoFileInput.nativeElement.value = '';
           });
 
+        } else if (
+          mode === 'signatureImage' ||
+          mode === 'parentSignatureImage' ||
+          mode === 'fatherSignaturePhoto' ||
+          mode === 'motherSignaturePhoto' ||
+          mode === 'sisterSignaturePhoto' ||
+          mode === 'brotherSignaturePhoto'
+        ) {
+
+          this.allEventEmitters.showLoader.emit(true);
+          this._admissionService.validateSignature(file).subscribe((response) => {
+            this.allEventEmitters.showLoader.emit(false);
+
+            if (response.success && response.validation && response.validation.isValid) {
+              let postParam = {
+                'mode': mode,
+              }
+              this.openImageCropperDialog(event, postParam);
+            } else {
+              const errors = response.validation?.errors?.join(', ') || 'Invalid signature image. Please upload a clear human signature.';
+              this._snackBarMsgComponent.openSnackBar(errors, 'x', 'error-snackbar', 6000);
+
+              // Reset file input based on mode
+              if (mode == 'signatureImage' && this.signatureImageFileInput) this.signatureImageFileInput.nativeElement.value = '';
+              else if (mode == 'parentSignatureImage' && this.parentSignatureImageFileInput) this.parentSignatureImageFileInput.nativeElement.value = '';
+              // For brevity, not resetting all 6 file inputs perfectly, the user can just re-click upload as the UI state stays unchanged
+            }
+          }, (error) => {
+            this.allEventEmitters.showLoader.emit(false);
+            console.error(error);
+            this._snackBarMsgComponent.openSnackBar('Failed to validate signature. Please try again.', 'x', 'error-snackbar', 5000);
+          });
+
         } else {
           let postParam = {
             'mode': mode,

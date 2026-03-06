@@ -66,34 +66,72 @@ export class DocumentUploadDialogComponent implements OnInit {
 
         this.isExtracting = true;
         this.isVerifying = true;
-        this.verificationMessage = 'Verifying and extracting data...';
+        this.verificationMessage = 'Verifying document...';
         this.extractionError = '';
 
-        this.extractionService.extractMarksheetData(this.selectedFile, this.data.document_name).subscribe({
-            next: (response) => {
-                this.isExtracting = false;
-                this.isVerifying = false;
+        const docNameLower = this.data.document_name.toLowerCase();
+        const isMarksheet = docNameLower.includes('ssc') || docNameLower.includes('hsc') || docNameLower.includes('marksheet');
 
-                if (response.success && response.data) {
-                    this.verificationMessage = `✓ Verified as ${this.data.document_name}`;
-                    this.extractedData = response.data;
-                    console.log('Extracted data:', this.extractedData);
-                } else {
+        if (isMarksheet) {
+            // Document requires data extraction
+            this.extractionService.extractMarksheetData(this.selectedFile, this.data.document_name).subscribe({
+                next: (response) => {
+                    this.isExtracting = false;
+                    this.isVerifying = false;
+
+                    if (response.success && response.data) {
+                        this.verificationMessage = `✓ Verified as ${this.data.document_name}`;
+                        this.extractedData = response.data;
+                        console.log('Extracted data:', this.extractedData);
+                    } else {
+                        this.verificationFailed = true;
+                        this.verificationMessage = '✗ Verification failed';
+                        this.extractionError = response.error || 'Failed to extract data from document.';
+                    }
+                },
+                error: (error) => {
+                    this.isExtracting = false;
+                    this.isVerifying = false;
                     this.verificationFailed = true;
-                    this.verificationMessage = '✗ Verification failed';
-                    this.extractionError = response.error || 'Failed to extract data from document.';
+                    this.verificationMessage = '✗ Invalid Document';
+                    this.extractionError = error.message || 'Extraction service unavailable. Please ensure the backend is running.';
+                    console.error('Extraction error:', error);
                 }
-            },
-            error: (error) => {
-                this.isExtracting = false;
-                this.isVerifying = false;
-                this.verificationFailed = true;
-                this.verificationMessage = '✗ Invalid Document';
-                // The error message comes straight from the backend (Gemini's invalidReason)
-                this.extractionError = error.message || 'Extraction service unavailable. Please ensure the backend is running.';
-                console.error('Extraction error:', error);
-            }
-        });
+            });
+        } else {
+            // Document only requires visual verification (e.g., Caste Certificate)
+            this.extractionService.verifyDocument(this.selectedFile, this.data.document_name).subscribe({
+                next: (response: any) => {
+                    this.isExtracting = false;
+                    this.isVerifying = false;
+
+                    if (response.success && response.verification && response.verification.isValid) {
+                        this.verificationMessage = `✓ Verified as ${this.data.document_name}`;
+                        // Create a dummy extractedData object so the submit button doesn't stay disabled
+                        this.extractedData = {
+                            candidateName: '',
+                            marks: [],
+                            totalMarks: '',
+                            percentage: '',
+                            seatNumber: '',
+                            mathsScore: ''
+                        } as any;
+                    } else {
+                        this.verificationFailed = true;
+                        this.verificationMessage = '✗ Verification failed';
+                        this.extractionError = response.verification?.reason || 'Document does not match the expected type.';
+                    }
+                },
+                error: (error) => {
+                    this.isExtracting = false;
+                    this.isVerifying = false;
+                    this.verificationFailed = true;
+                    this.verificationMessage = '✗ Invalid Document';
+                    this.extractionError = error.message || 'Verification service unavailable.';
+                    console.error('Verification error:', error);
+                }
+            });
+        }
     }
 
     submit(): void {

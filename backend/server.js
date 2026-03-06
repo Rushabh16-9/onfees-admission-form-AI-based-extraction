@@ -7,12 +7,13 @@ const fs = require('fs').promises;
 const path = require('path');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { createCanvas } = require('canvas');
+const { Groq } = require('groq-sdk');
 require('dotenv').config();
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-// Initialize Gemini with the API key from environment variables
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Initialize Groq config
+const groq = new Groq({
+    apiKey: process.env.GROQ_API_KEY
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -142,28 +143,31 @@ Rules:
   - If 2 words: lastName = first, firstName = second, middleName = ''
 - Do not leave firstName/middleName/lastName empty if candidateName is filled`;
 
-    const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
-        generationConfig: {
-            responseMimeType: "application/json"
-        }
-    });
-    const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
-
     const MAX_RETRIES = 3;
     let lastErr;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const result = await model.generateContent([promptText, imagePart]);
-            let content = result.response.text() || "";
-            console.log("---- Raw Gemini Response ----");
+            const chatCompletion = await groq.chat.completions.create({
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: promptText },
+                            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                        ]
+                    }
+                ],
+                model: 'llama-3.2-90b-vision-preview',
+                response_format: { type: "json_object" }
+            });
+
+            let content = chatCompletion.choices[0]?.message?.content || "";
+            console.log("---- Raw Groq Response ----");
             console.log(content);
             console.log("-----------------------------");
 
-            // With responseMimeType: "application/json", the model should return raw JSON.
-            // However, older models or unexpected responses might still wrap it.
-            // This parsing logic is kept for robustness.
+            // Strip markdown JSON wrappers if the model still includes them despite json_object format
             if (content.includes('\`\`\`json')) content = content.split('\`\`\`json')[1].split('\`\`\`')[0].trim();
             else if (content.includes('\`\`\`')) content = content.split('\`\`\`')[1].split('\`\`\`')[0].trim();
 
@@ -257,29 +261,134 @@ app.post('/api/extract-marksheet', uploadMiddleware, async (req, res) => {
     }
 });
 
-// Endpoint: Verify document type (Now mocked because it's combined into extract-marksheet)
+// Endpoint: Verify generic document type
 app.post('/api/verify-document', uploadMiddleware, async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
         }
-        const expectedType = req.body.expectedType || 'HSC Marksheet';
-        console.log('Verifying document (instant accept)...');
+        const expectedType = req.body.expectedType || 'Document';
+        console.log(`Verifying document is a genuine: ${expectedType}...`);
 
-        // Return instant success because actual verification is now done during extraction
+        const imageBuffer = req.file.buffer;
+        const mimeType = req.file.mimetype || 'image/jpeg';
+        const base64Image = imageBuffer.toString('base64');
+
+        const prompt = `You are a strict Indian college admission auditor. 
+Analyze this image and determine if it is a genuine, legible "${expectedType}".
+
+A VALID document must:
+- Clearly appear to be a "${expectedType}"
+- Be readable and not excessively blurry
+
+INVALID examples:
+- Photos of random objects, fruits, people, scenery, or completely unrelated documents.
+
+Return ONLY a JSON object:
+{
+  "isValid": true or false,
+  "confidence": number between 0 and 100,
+  "reason": "explanation of why it is valid or invalid"
+}`;
+
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                    ]
+                }
+            ],
+            model: 'llama-3.2-90b-vision-preview',
+            response_format: { type: "json_object" }
+        });
+
+        let responseText = chatCompletion.choices[0]?.message?.content || "{}";
+        responseText = responseText.trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+        const parsed = JSON.parse(responseText);
+
+        console.log(`Document verification result for ${expectedType}:`, parsed);
+
         res.json({
             success: true,
             verification: {
-                isValid: true,
-                confidence: 99,
+                isValid: parsed.isValid === true,
+                confidence: parsed.confidence || 0,
                 documentType: expectedType,
-                reason: "Document verification combined with extraction"
+                reason: parsed.reason || ""
             }
         });
     } catch (error) {
         console.error('Verification error:', error);
         res.status(500).json({
             error: error.message || 'Failed to verify document'
+        });
+    }
+});
+
+// Endpoint: Validate signature using Groq AI
+app.post('/api/validate-signature', uploadMiddleware, async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        console.log('Validating signature with Groq AI...');
+        const imageBuffer = req.file.buffer;
+        const mimeType = req.file.mimetype || 'image/jpeg';
+        const base64Image = imageBuffer.toString('base64');
+
+        const prompt = `You are a strict AI auditor validating a signature image for an Indian college admission form.
+
+Analyze this image and determine if it is a genuine, handwritten or digitally drawn human signature.
+
+A VALID signature MUST:
+- Clearly show cursive writing, initials, or handwriting representing a person's name.
+- Be on a relatively plain background (like white paper or a digital canvas).
+
+INVALID examples (MUST REJECT IMMEDIATELY):
+- Photos of human faces, animals, objects (like apples), scenery, printed text passages, entire documents/certificates.
+- Blank or completely blurred images.
+
+Return ONLY a JSON object:
+{
+  "isValid": true or false,
+  "errors": ["reason if invalid, empty array if valid"]
+}`;
+
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                    ]
+                }
+            ],
+            model: 'llama-3.2-90b-vision-preview',
+            response_format: { type: "json_object" }
+        });
+
+        let responseText = chatCompletion.choices[0]?.message?.content || "{}";
+        responseText = responseText.trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+        const parsed = JSON.parse(responseText);
+
+        console.log('Signature validation result:', parsed);
+        res.json({
+            success: true,
+            validation: {
+                isValid: parsed.isValid === true,
+                errors: parsed.errors || []
+            }
+        });
+    } catch (error) {
+        console.error('Signature validation error:', error);
+        // Fail open only on hard server errors
+        res.status(500).json({
+            error: error.message || 'Failed to validate signature'
         });
     }
 });
@@ -295,14 +404,6 @@ app.post('/api/validate-photo', uploadMiddleware, async (req, res) => {
         const imageBuffer = req.file.buffer;
         const mimeType = req.file.mimetype || 'image/jpeg';
         const base64Image = imageBuffer.toString('base64');
-
-        const model = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash",
-            generationConfig: {
-                responseMimeType: "application/json"
-            }
-        });
-        const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
 
         const prompt = `You are strict AI auditor validating a passport-size photo for an Indian college admission form.
 
@@ -325,8 +426,23 @@ Return ONLY a JSON object (no markdown, no explanation):
   "errors": ["reason if invalid, empty array if valid"]
 }`;
 
-        const result = await model.generateContent([prompt, imagePart]);
-        const responseText = result.response.text();
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                    ]
+                }
+            ],
+            model: 'llama-3.2-90b-vision-preview',
+            response_format: { type: "json_object" }
+        });
+
+        let responseText = chatCompletion.choices[0]?.message?.content || "{}";
+        // fallback stripping in case llama vision ignores json_object rule slightly
+        responseText = responseText.trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
         const parsed = JSON.parse(responseText);
 
         console.log('Photo validation result:', parsed);
