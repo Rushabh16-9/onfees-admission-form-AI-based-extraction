@@ -276,21 +276,55 @@ app.post('/api/verify-document', uploadMiddleware, async (req, res) => {
     }
 });
 
-// Endpoint: Validate passport photo (Mocked for speed if needed)
+// Endpoint: Validate passport photo using Gemini AI
 app.post('/api/validate-photo', uploadMiddleware, async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
         }
+
+        console.log('Validating passport photo with Gemini AI...');
+        const imageBuffer = req.file.buffer;
+        const mimeType = req.file.mimetype || 'image/jpeg';
+        const base64Image = imageBuffer.toString('base64');
+
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
+
+        const prompt = `You are validating a passport-size photo for an Indian college admission form.
+
+Analyze this image and determine if it is a valid passport-size photograph of a human person.
+
+A VALID photo must:
+- Clearly show a HUMAN FACE (the person's face must be clearly visible)
+- Be a portrait-style photo of a person
+
+INVALID examples (MUST reject):
+- Photos of animals, fruits (like apples), food, objects, scenery, documents, text
+- Blank or completely blurred images
+- Group photos where the person is not the clear subject
+
+Return ONLY a JSON object (no markdown, no explanation):
+{
+  "isValid": true or false,
+  "errors": ["reason if invalid, empty array if valid"]
+}`;
+
+        const result = await model.generateContent([prompt, imagePart]);
+        const raw = result.response.text().trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim();
+        const parsed = JSON.parse(raw);
+
+        console.log('Photo validation result:', parsed);
         res.json({
             success: true,
             validation: {
-                isValid: true,
-                errors: []
+                isValid: parsed.isValid === true,
+                errors: parsed.errors || []
             }
         });
     } catch (error) {
-        console.error('Validation error:', error);
+        console.error('Photo validation error:', error);
+        // Fail open only on hard server errors (not AI rejections)
         res.status(500).json({
             error: error.message || 'Failed to validate photo'
         });
