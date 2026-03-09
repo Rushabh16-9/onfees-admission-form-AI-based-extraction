@@ -7,11 +7,12 @@ const fs = require('fs').promises;
 const path = require('path');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { createCanvas } = require('canvas');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { Groq } = require('groq-sdk');
 require('dotenv').config();
 
-// Initialize Gemini config
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Initialize Groq (Llama 4 vision)
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -141,26 +142,31 @@ Rules:
   - If 2 words: lastName = first, firstName = second, middleName = ''
 - Do not leave firstName/middleName/lastName empty if candidateName is filled`;
 
-    const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
-        generationConfig: {
-            responseMimeType: "application/json"
-        }
-    });
-    const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
-
     const MAX_RETRIES = 3;
     let lastErr;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const result = await model.generateContent([promptText, imagePart]);
-            let responseText = result.response.text() || "{}";
-            console.log("---- Raw Gemini Response ----");
-            console.log(responseText);
-            console.log("-----------------------------");
+            const chatCompletion = await groq.chat.completions.create({
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: promptText },
+                            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                        ]
+                    }
+                ],
+                model: GROQ_VISION_MODEL,
+                response_format: { type: 'json_object' }
+            });
 
-            const parsed = JSON.parse(responseText);
+            let content = chatCompletion.choices[0]?.message?.content || '{}';
+            console.log('---- Raw Groq Response ----');
+            console.log(content);
+            console.log('---------------------------');
+
+            const parsed = JSON.parse(content);
 
             const fullName = (parsed.personalInfo?.candidateName || '').trim();
             if (fullName && !parsed.personalInfo.firstName) {
@@ -180,19 +186,17 @@ Rules:
             return parsed;
         } catch (err) {
             lastErr = err;
-            const retryMatch = (err.message || '').match(/"retryDelay":"(\d+)s"/);
-            if (retryMatch && attempt < MAX_RETRIES) {
-                const waitSec = parseInt(retryMatch[1], 10) + 2;
-                console.warn(`Gemini rate-limited. Waiting ${waitSec}s before retry (attempt ${attempt}/${MAX_RETRIES})...`);
-                await sleepMs(waitSec * 1000);
+            console.warn(`Groq attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
+            if (attempt < MAX_RETRIES) {
+                await sleepMs(2000);
             } else {
                 break;
             }
         }
     }
 
-    console.error("Gemini extraction error:", lastErr.message || lastErr);
-    throw new Error(`Failed to extract via Gemini API. Reason: ${lastErr.message || 'Unknown error'}`);
+    console.error('Groq extraction error:', lastErr.message || lastErr);
+    throw new Error(`Failed to extract via Groq API. Reason: ${lastErr.message || 'Unknown error'}`);
 }
 
 // Endpoint: Extract + Verify data from SSC/HSC marksheet using Gemini
@@ -277,27 +281,31 @@ Return ONLY a JSON object:
   "reason": "explanation of why it is valid or invalid"
 }`;
 
-        const model = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash",
-            generationConfig: {
-                responseMimeType: "application/json"
-            }
+        const chatCompletion1 = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                    ]
+                }
+            ],
+            model: GROQ_VISION_MODEL,
+            response_format: { type: 'json_object' }
         });
-        const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
+        let responseText1 = chatCompletion1.choices[0]?.message?.content || '{}';
+        const parsed1 = JSON.parse(responseText1);
 
-        const result = await model.generateContent([prompt, imagePart]);
-        let responseText = result.response.text() || "{}";
-        const parsed = JSON.parse(responseText);
-
-        console.log(`Document verification result for ${expectedType}:`, parsed);
+        console.log(`Document verification result for ${expectedType}:`, parsed1);
 
         res.json({
             success: true,
             verification: {
-                isValid: parsed.isValid === true,
-                confidence: parsed.confidence || 0,
+                isValid: parsed1.isValid === true,
+                confidence: parsed1.confidence || 0,
                 documentType: expectedType,
-                reason: parsed.reason || ""
+                reason: parsed1.reason || ''
             }
         });
     } catch (error) {
@@ -338,29 +346,32 @@ Return ONLY a JSON object:
   "errors": ["reason if invalid, empty array if valid"]
 }`;
 
-        const model = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash",
-            generationConfig: {
-                responseMimeType: "application/json"
-            }
+        const chatCompletion2 = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                    ]
+                }
+            ],
+            model: GROQ_VISION_MODEL,
+            response_format: { type: 'json_object' }
         });
-        const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
+        let responseText2 = chatCompletion2.choices[0]?.message?.content || '{}';
+        const parsed2 = JSON.parse(responseText2);
 
-        const result = await model.generateContent([prompt, imagePart]);
-        let responseText = result.response.text() || "{}";
-        const parsed = JSON.parse(responseText);
-
-        console.log('Signature validation result:', parsed);
+        console.log('Signature validation result:', parsed2);
         res.json({
             success: true,
             validation: {
-                isValid: parsed.isValid === true,
-                errors: parsed.errors || []
+                isValid: parsed2.isValid === true,
+                errors: parsed2.errors || []
             }
         });
     } catch (error) {
         console.error('Signature validation error:', error);
-        // Fail open only on hard server errors
         res.status(500).json({
             error: error.message || 'Failed to validate signature'
         });
@@ -400,29 +411,32 @@ Return ONLY a JSON object (no markdown, no explanation):
   "errors": ["reason if invalid, empty array if valid"]
 }`;
 
-        const model = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash",
-            generationConfig: {
-                responseMimeType: "application/json"
-            }
+        const chatCompletion3 = await groq.chat.completions.create({
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                    ]
+                }
+            ],
+            model: GROQ_VISION_MODEL,
+            response_format: { type: 'json_object' }
         });
-        const imagePart = { inlineData: { data: base64Image, mimeType: mimeType } };
+        let responseText3 = chatCompletion3.choices[0]?.message?.content || '{}';
+        const parsed3 = JSON.parse(responseText3);
 
-        const result = await model.generateContent([prompt, imagePart]);
-        let responseText = result.response.text() || "{}";
-        const parsed = JSON.parse(responseText);
-
-        console.log('Photo validation result:', parsed);
+        console.log('Photo validation result:', parsed3);
         res.json({
             success: true,
             validation: {
-                isValid: parsed.isValid === true,
-                errors: parsed.errors || []
+                isValid: parsed3.isValid === true,
+                errors: parsed3.errors || []
             }
         });
     } catch (error) {
         console.error('Photo validation error:', error);
-        // Fail open only on hard server errors (not AI rejections)
         res.status(500).json({
             error: error.message || 'Failed to validate photo'
         });
@@ -431,7 +445,7 @@ Return ONLY a JSON object (no markdown, no explanation):
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {
-    res.json({ status: 'healthy', api: 'Gemini 2.5 Active' });
+    res.json({ status: 'healthy', api: 'Groq Llama 4 Scout Active' });
 });
 
 // Global error handler
