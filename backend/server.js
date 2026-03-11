@@ -24,7 +24,7 @@ app.use(express.json());
 // Configure multer for file uploads
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
     fileFilter: (req, file, cb) => {
         const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
         if (allowedTypes.includes(file.mimetype)) {
@@ -87,9 +87,10 @@ async function extractWithGemini(imageBuffer, mimeType, expectedDocType) {
 
     const promptText = `You are a highly capable AI specialized in Indian academic document data extraction.
 
-STEP 1 - STRICT VERIFICATION: Verify if this image is EXACTLY a "${expectedDocType || 'SSC or HSC Marksheet'}".
+STEP 1 - STRICT VERIFICATION: Verify if this image is EXACTLY a "${expectedDocType || 'SSC, HSC, Diploma, Degree, or Semester Marksheet'}".
 - If the expected type is "SSC Marksheet", the image MUST be a 10th grade marksheet. If the image is a 12th grade/HSC marksheet, you MUST reject it by setting "notAMarksheet": true.
 - If the expected type is "HSC Marksheet", the image MUST be a 12th grade marksheet. If the image is a 10th grade/SSC marksheet, you MUST reject it by setting "notAMarksheet": true.
+- If the expected type contains "Semester", "Degree", or "Diploma", ensure the image is a college or university marksheet for that level and reject school-level marksheets.
 - CRITICAL: If the image is a picture of a person, an apple, a random object, scenery, a blank page, or ANY non-academic document, you MUST immediately reject it by setting "notAMarksheet": true and providing a descriptive "invalidReason" (e.g. "This is a photo of a random object, not a marksheet").
 
 STEP 2 - EXTRACT: If the document strictly matches the expected type, extract the fields below.
@@ -119,14 +120,30 @@ Return ONLY a valid JSON object with this exact structure. No markdown, no expla
     "marksOutof": "",
     "percentage": "",
     "cgpa": "",
+<<<<<<< HEAD
     "grade": "",
     "result": "",
     "stream": "",
     "subjects": []
+=======
+    "sgpa": "",
+    "semester": "",
+    "grade": "",
+    "result": "",
+    "atktCount": "",
+    "stream": "",
+    "subjects": [
+      {
+        "name": "",
+        "marks": ""
+      }
+    ]
+>>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
   }
 }
 
 Rules:
+<<<<<<< HEAD
 - notAMarksheet: set true ONLY if the document does NOT match the requested "${expectedDocType || 'SSC or HSC Marksheet'}" (e.g. uploading HSC when SSC is requested).
 - invalidReason: short explanation if notAMarksheet is true (e.g., "This is an HSC marksheet, but an SSC marksheet was requested"), otherwise empty string
 - examination: 'HSC' or 'SSC'
@@ -141,6 +158,39 @@ Rules:
   - lastName = first word, firstName = second word, middleName = remaining words
   - If 2 words: lastName = first, firstName = second, middleName = ''
 - Do not leave firstName/middleName/lastName empty if candidateName is filled`;
+=======
+- notAMarksheet: set true ONLY if the document is completely unrelated or explicitly a mismatch for "${expectedDocType || 'Marksheet'}" (e.g., uploading HSC when SSC is requested). Treat semester marksheets valid if "Semester" or "Degree" is expected.
+- invalidReason: short explanation if notAMarksheet is true.
+- examination: 'HSC', 'SSC', 'Diploma', 'Degree', or the specific exam name.
+- result: 'PASS', 'FAIL', 'PROMOTED', or empty if not clearly stated.
+- passingYear: Identify the year the exam was held or passed. Look for "Month/Year of Exam", "Exam Held In", or similar fields. Extract ONLY the 4-digit year (YYYY format, e.g., "2024").
+- passingMonth: Identify the month the exam was held or passed. E.g., if it says "October 2024", extract "October". Extract the full English month name.
+- percentage: number only (e.g., 85.50). If only SGPA/CGPA is present, leave empty.
+- sgpa/cgpa: number only (e.g., 8.5)
+- semester: extract the semester number if visible (e.g., "1", "2", "6").
+- seatNo: alphanumeric seat/roll number or PRN.
+- atktCount: Look at the marks/grades table. Count how many subjects have "F" (Fail), "FF", or "ABS" (Absent), or require a re-attempt. If the student passed all subjects, return "0". If there are 2 failed subjects, return "2".
+
+CANDIDATE NAME EXTRACTION (CRITICAL RULES):
+  Primary Anchor: Find the specific text label "Name of Candidate" or "Candidate Name" in the top section of the document (top 30%).
+  Target Value: Extract the name printed IMMEDIATELY TO THE RIGHT of that anchor label. This is the ONLY valid name for candidateName.
+  The "Bottom 25%" Rule (STRICT EXCLUSION): Ignore ALL text in the bottom quarter of the image.
+    - If a name is located near a signature, a stamp, or the words "Principal", "Controller", "Checked by", or "Examination", it is an official's name. It is INVALID. Discard it.
+    - Ignore the names "Ketan Lalji Jain" or "Kinjal Bharat Jain" entirely.
+  Verification: The correct student's name WILL be physically close to the "Seat No", "Student ID", and "ABC ID" fields. If the name you found is not near these fields, discard it and look at the top header again.
+
+- gender: Look for a "Gender" field in the top table. Extract "Male" or "Female" exactly.
+- board: For degree/semester marksheets, look for "University of Mumbai" or the affiliating university name. Set this as the board.
+- schoolName: Set to the college name exactly as printed (e.g., "Royal College of Arts, Science and Commerce").
+- mothersName: mother's name exactly as printed.
+- abcId: ABC ID or APAAR ID if visible. Common format: "ABC ID: XXXXXXXXXXXX". Extract only the numeric ID.
+- IMPORTANT - Indian name format is SURNAME FIRSTNAME MIDDLENAME:
+  - lastName = first word, firstName = second word, middleName = remaining words
+  - If 2 words: lastName = first, firstName = second, middleName = ''
+- Do not leave firstName/middleName/lastName empty if candidateName is filled.
+- DEGREE MARKS/TABLES: Look for "Total Marks", "∑CG", "∑C", "Marks Obtained" at the bottom of the marks table. Copy the printed totals (e.g., 397 for obtained, 550 for out of).
+- subjects: For each subject row in the grade card, extract the subject name and the total marks obtained for that subject.`;
+>>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
 
     const MAX_RETRIES = 3;
     let lastErr;
@@ -168,6 +218,17 @@ Rules:
 
             const parsed = JSON.parse(content);
 
+<<<<<<< HEAD
+=======
+            // DEBUG: Log name fields specifically
+            console.log('>>> candidateName from AI:', parsed.personalInfo?.candidateName);
+            console.log('>>> firstName:', parsed.personalInfo?.firstName);
+            console.log('>>> lastName:', parsed.personalInfo?.lastName);
+            console.log('>>> board:', parsed.academicInfo?.board);
+            console.log('>>> marksObtained:', parsed.academicInfo?.marksObtained);
+            console.log('>>> marksOutof:', parsed.academicInfo?.marksOutof);
+
+>>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
             const fullName = (parsed.personalInfo?.candidateName || '').trim();
             if (fullName && !parsed.personalInfo.firstName) {
                 const parts = fullName.split(/\s+/);
@@ -230,7 +291,11 @@ app.post('/api/extract-marksheet', uploadMiddleware, async (req, res) => {
         if (extractedData.notAMarksheet) {
             console.warn('Gemini identified document as invalid:', extractedData.invalidReason);
             return res.status(400).json({
+<<<<<<< HEAD
                 error: `Invalid document: ${extractedData.invalidReason || 'This does not appear to be a valid SSC or HSC Marksheet. Please upload the correct document.'}`
+=======
+                error: `Invalid document: ${extractedData.invalidReason || 'This does not appear to be a valid marksheet. Please upload the correct document.'}`
+>>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
             });
         }
 

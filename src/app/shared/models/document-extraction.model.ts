@@ -13,12 +13,21 @@ export interface ExtractedMarksheetData {
     academicInfo: {
         board: string;
         passingYear: number;
+        passingMonth?: string;
+        atktCount?: number;
         subjects: Array<{
             name: string;
             marks: number;
         }>;
         totalMarks: number;
         percentage: number;
+        marksObtained?: number;
+        marksOutof?: number;
+        cgpa?: string;
+        sgpa?: string;
+        grade?: string;
+        examination?: string;
+        semester?: string;
     };
 }
 
