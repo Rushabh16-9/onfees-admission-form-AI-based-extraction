@@ -116,8 +116,8 @@ export class AdmissionFormComponent implements OnInit {
 
     dialogRef.afterClosed().subscribe(result => {
       console.log('AdmissionForm: Dialog closed with result:', result);
-      if (result && result.success && result.extractedData && result.file) {
-        console.log('Document uploaded successfully with extracted data:', result.extractedData);
+      if (result && result.success && result.file) {
+        console.log('Document upload verified, proceeding to upload file:', result.file?.name);
 
         const docId = this.resolveDocumentId(result, document);
         const file = result.file;
@@ -146,7 +146,9 @@ export class AdmissionFormComponent implements OnInit {
                 }
               }
 
-              this.autoFillFormWithExtractedData(result.extractedData, docId, fileName);
+              if (result.extractedData) {
+                this.autoFillFormWithExtractedData(result.extractedData, docId, fileName);
+              }
 
               const successMsg = response.message || 'Document uploaded successfully';
               this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar(successMsg, 'x', 'success-snackbar', 5000);

@@ -433,6 +433,7 @@ export class AdmissionService {
 
     return this.http.post<any>('http://localhost:3000/api/validate-photo', formData)
       .pipe(
+        timeout(globalFunctions.timeoutSeconds()),
         map(response => {
           return response;
         }),
@@ -449,6 +450,7 @@ export class AdmissionService {
 
     return this.http.post<any>('http://localhost:3000/api/validate-signature', formData)
       .pipe(
+        timeout(globalFunctions.timeoutSeconds()),
         map(response => response),
         catchError(error => {
           console.error('Signature validation error:', error);
