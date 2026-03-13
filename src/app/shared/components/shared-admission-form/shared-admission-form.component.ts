@@ -25,6 +25,7 @@ import { ApplicationPreviewDialogComponent } from 'app-shared-components/applica
 import { DocumentUploadDialogComponent } from '../document-upload-dialog/document-upload-dialog.component';
 import { ImageCropperDialogComponent } from 'app-shared-components/image-cropper-dialog/image-cropper-dialog.component';
 import { MatLegacyDialog as MatDialog } from '@angular/material/legacy-dialog';
+import { DocumentExtractionService } from 'app/shared/services/document-extraction.service';
 import * as _moment from 'moment';
 const moment = _moment;
 
@@ -403,6 +404,7 @@ export class SharedAdmissionFormComponent implements OnInit {
     private _admissionService: AdmissionService,
     private _institutesService: InstitutesService,
     private _commonService: CommonService,
+    private documentExtractionService: DocumentExtractionService,
     public _snackBarMsgComponent: SnackBarMsgComponent,
     private allEventEmitters: AllEventEmitters,
   ) {
@@ -7745,7 +7747,7 @@ export class SharedAdmissionFormComponent implements OnInit {
         if (this.formLock) {
           this.openEditAlert(stepper);
         } else {
-          this.saveForm('finalSave');
+          this.saveForm('finalSave', { stepName: 'declaration' });
 
           // this.openConfirmDialog();
         }
@@ -7771,7 +7773,7 @@ export class SharedAdmissionFormComponent implements OnInit {
 
     dialogRef.afterClosed().subscribe(result => {
       if (result == 'ok') {
-        this.saveForm('finalSave');
+        this.saveForm('finalSave', { stepName: 'declaration' });
       }
     });
   }
@@ -7938,6 +7940,17 @@ export class SharedAdmissionFormComponent implements OnInit {
 
       } else {
 
+        // Only use AI extraction dialog for marksheet-type documents.
+        // Other documents (caste cert, birth cert, leaving cert, etc.) go straight to upload.
+        const docTitle = (documents['controls'].docTitle.value || '').toLowerCase();
+        const normalizedDocTitle = docTitle.replace(/\s+/g, ' ').trim();
+        const isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(normalizedDocTitle);
+        const isAadhaarDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard)\b/.test(normalizedDocTitle);
+        // Aadhaar must never be routed through marksheet extraction even if title has mixed terms.
+        const isMarksheetDoc = !isVerificationOnlyDoc &&
+          /\b(marksheet|mark\s*sheet|ssc|hsc|semester|sem|diploma|degree|10th|12th)\b/.test(normalizedDocTitle);
+
+        if (isMarksheetDoc) {
         // Open Document Upload Dialog for AI Verification and Extraction (for both PDF and images)
         const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
           width: '800px',
@@ -7953,57 +7966,119 @@ export class SharedAdmissionFormComponent implements OnInit {
           if (result && result.success) {
             console.log('Dialog success, uploading file and patching data...');
 
-            // If we have Sem 1 data from a sequence upload, handle it first silently (no crop)
+            const resolveDocumentPosition = (preferredDocId: any, semesterNo: number, fallbackDocIndex: number, fallbackBunchIndex: number) => {
+              let resolvedDocIndex = fallbackDocIndex;
+              let resolvedBunchIndex = fallbackBunchIndex;
+              let resolvedDocId = preferredDocId;
+
+              const isSemesterTitle = (rawTitle: any) => {
+                const title = (rawTitle || '').toString().toLowerCase().replace(/\s+/g, ' ').trim();
+                if (semesterNo === 1) {
+                  return /(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(title) || /\bsem\s*1\b/.test(title) || /\bsem1\b/.test(title);
+                }
+                return /(sem|semester|semister)\s*[-_]?\s*(2|ii)\b/.test(title) || /\bsem\s*2\b/.test(title) || /\bsem2\b/.test(title);
+              };
+
+              let matchedById = false;
+              if (!globalFunctions.isEmpty(preferredDocId)) {
+                for (let d = 0; d < this.documentsBunch.length; d++) {
+                  for (let b = 0; b < this.documentsBunch[d].length; b++) {
+                    if (this.documentsBunch[d][b].value.docId == preferredDocId) {
+                      resolvedDocIndex = d;
+                      resolvedBunchIndex = b;
+                      resolvedDocId = this.documentsBunch[d][b].value.docId;
+                      matchedById = true;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              if (!matchedById) {
+                for (let d = 0; d < this.documentsBunch.length; d++) {
+                  for (let b = 0; b < this.documentsBunch[d].length; b++) {
+                    const title = this.documentsBunch[d][b].value.docTitle;
+                    if (isSemesterTitle(title)) {
+                      resolvedDocIndex = d;
+                      resolvedBunchIndex = b;
+                      resolvedDocId = this.documentsBunch[d][b].value.docId;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              return { resolvedDocIndex, resolvedBunchIndex, resolvedDocId };
+            };
+
+            // If we have Sem 1 data from dual upload (file was already uploaded inside the dialog)
             if (result.sem1Data) {
-              console.log('Found Sem 1 chained data, patching and uploading silently...');
-              this.patchExtractedData(result.sem1Data.extractedData, documents['controls'].docId.value);
-              
-              const sem1Ext = result.sem1Data.file.name.toUpperCase().split('.').pop() || result.sem1Data.file.name;
-              // Pass the raw file directly to browsedDocData to upload Sem 1 to server
-              this.browsedDocData(result.sem1Data.file, docIndex, bunchIndex, sem1Ext);
+              const sem1Resolved = resolveDocumentPosition(
+                result.sem1Data.document_id || documents['controls'].docId.value,
+                1,
+                docIndex,
+                bunchIndex
+              );
+              const sem1DocControl = this.documentsBunch[sem1Resolved.resolvedDocIndex]?.[sem1Resolved.resolvedBunchIndex];
+              if (sem1DocControl && result.sem1Data.fileName) {
+                const fnLC = (result.sem1Data.fileName || '').toLowerCase();
+                sem1DocControl['controls'].isBrowsed.setValue(true);
+                sem1DocControl['controls'].isUploaded.setValue(true);
+                sem1DocControl['controls'].docError.setValue(false);
+                sem1DocControl['controls'].uploadedFile.setValue(result.sem1Data.fileName);
+                sem1DocControl['controls'].docToUpload.setValue(result.sem1Data.fileName);
+                sem1DocControl['controls'].hasPhoto.setValue(fnLC.endsWith('.pdf') ? this.defaultPdfImage : result.sem1Data.fileName);
+                this.updateDocumentStatus(sem1Resolved.resolvedDocId);
+              }
+              try {
+                this.patchExtractedData(result.sem1Data.extractedData, sem1Resolved.resolvedDocId);
+              } catch (e) {
+                console.error('[SEM1] Error patching Sem 1 extracted data:', e);
+              }
             }
 
             // At this point, `result` represents the final document in the dialog flow
             // If there's Sem 1 data, `result` is Sem 2. If no Sem 1 data, `result` is just the single uploaded document.
             
             // Find Sem 2's grid coordinates if this was a sequence upload
-            let targetDocIndex = docIndex;
-            let targetBunchIndex = bunchIndex;
-            
-            if (result.sem1Data && result.document_id === 389) {
-               // Look for Sem 2 in the documentsBunch to attach the image properly
-               for (let d = 0; d < this.documentsBunch.length; d++) {
-                  for (let b = 0; b < this.documentsBunch[d].length; b++) {
-                     if (this.documentsBunch[d][b].value.docId === 389) {
-                        targetDocIndex = d;
-                        targetBunchIndex = b;
-                     }
-                  }
-               }
-            }
+            const sem2Resolved = resolveDocumentPosition(
+              result.sem2_document_id || result.document_id,
+              2,
+              docIndex,
+              bunchIndex
+            );
 
-            if (ext.toUpperCase() == 'PDF') {
-              this.browsedDocData(result.file, targetDocIndex, targetBunchIndex, 'PDF');
-            } else {
-              // For images - pass to the original cropper with the verified file
-              let postParam = {
-                mode: 'documents',
-                docIndex: targetDocIndex,
-                bunchIndex: targetBunchIndex,
+            if (result.fileName) {
+              // Dual upload path: file was already uploaded inside the dialog, just sync the form control
+              const sem2DocControl = this.documentsBunch[sem2Resolved.resolvedDocIndex]?.[sem2Resolved.resolvedBunchIndex];
+              if (sem2DocControl) {
+                const fnLC = (result.fileName || '').toLowerCase();
+                sem2DocControl['controls'].isBrowsed.setValue(true);
+                sem2DocControl['controls'].isUploaded.setValue(true);
+                sem2DocControl['controls'].docError.setValue(false);
+                sem2DocControl['controls'].uploadedFile.setValue(result.fileName);
+                sem2DocControl['controls'].docToUpload.setValue(result.fileName);
+                sem2DocControl['controls'].hasPhoto.setValue(fnLC.endsWith('.pdf') ? this.defaultPdfImage : result.fileName);
+                this.updateDocumentStatus(sem2Resolved.resolvedDocId);
               }
-              // If it's Sem 2, the original event is outdated, but the cropper dialog uses event.target.files
-              // To avoid cropper issues on chained uploads, we can just bypass the cropper for Sem 2 or 
-              // simulate it. For reliability, we will bypass cropper for Sem 2 chained upload:
-              if (result.sem1Data) {
-                  this.browsedDocData(result.file, targetDocIndex, targetBunchIndex, ext);
+            } else {
+              // Single upload path: file still needs to be uploaded
+              const sem2Ext = result.file?.name ? (result.file.name.toUpperCase().split('.').pop() || result.file.name) : ext;
+              if (sem2Ext.toUpperCase() == 'PDF') {
+                this.browsedDocData(result.file, sem2Resolved.resolvedDocIndex, sem2Resolved.resolvedBunchIndex, 'PDF');
               } else {
-                  this.openImageCropperDialog(event, postParam);
+                const postParam = {
+                  mode: 'documents',
+                  docIndex: sem2Resolved.resolvedDocIndex,
+                  bunchIndex: sem2Resolved.resolvedBunchIndex,
+                };
+                this.openImageCropperDialog(event, postParam);
               }
             }
 
             // If data was extracted, auto-fill the form
             if (result.extractedData) {
-              this.patchExtractedData(result.extractedData, result.document_id);
+              this.patchExtractedData(result.extractedData, sem2Resolved.resolvedDocId || result.document_id);
             }
           } else {
             // User cancelled or verification failed
@@ -8012,6 +8087,47 @@ export class SharedAdmissionFormComponent implements OnInit {
             event.target.value = ''; // Reset file input
           }
         });
+
+        } else {
+          // Non-marksheet document: skip AI dialog, go straight to upload
+          const proceedWithUpload = () => {
+            if (ext.toUpperCase() == 'PDF' || isVerificationOnlyDoc) {
+              this.browsedDocData(file, docIndex, bunchIndex, ext.toUpperCase() == 'PDF' ? 'PDF' : ext);
+            } else {
+              let postParam = {
+                mode: 'documents',
+                docIndex: docIndex,
+                bunchIndex: bunchIndex,
+              };
+              this.openImageCropperDialog(event, postParam);
+            }
+          };
+
+          if (isVerificationOnlyDoc) {
+            this.allEventEmitters.showLoader.emit(true);
+            this.documentExtractionService.verifyDocument(file, documents['controls'].docTitle.value || 'Document').subscribe({
+              next: (verifyRes) => {
+                this.allEventEmitters.showLoader.emit(false);
+                if (verifyRes?.success && verifyRes?.verification?.isValid) {
+                  proceedWithUpload();
+                } else {
+                  const reason = verifyRes?.verification?.reason || verifyRes?.error || 'Uploaded file is not a valid document.';
+                  documents['controls'].isBrowsed.setValue(false);
+                  event.target.value = '';
+                  this._snackBarMsgComponent.openSnackBar(`Document validation failed: ${reason}`, 'x', 'error-snackbar', 6000);
+                }
+              },
+              error: (verifyErr) => {
+                this.allEventEmitters.showLoader.emit(false);
+                documents['controls'].isBrowsed.setValue(false);
+                event.target.value = '';
+                this._snackBarMsgComponent.openSnackBar(`Document validation failed: ${verifyErr?.message || 'Unable to validate document.'}`, 'x', 'error-snackbar', 6000);
+              }
+            });
+          } else {
+            proceedWithUpload();
+          }
+        }
       }
     }
   }
@@ -9560,6 +9676,7 @@ export class SharedAdmissionFormComponent implements OnInit {
   }
 
   afterAdmissionFormSave(data) {
+    this.allEventEmitters.showLoader.emit(false);
     this.openPreviewDialog();
 
     /* if (this.documentsUpload && data.documentsUpload) {
@@ -10519,10 +10636,24 @@ export class SharedAdmissionFormComponent implements OnInit {
       // Handle ABC ID
       if (pi.abcId) patchValues.abcId = pi.abcId;
 
-      // IMPORTANT: Do NOT overwrite name fields if they are already filled in the form
-      // (AI extracts the Principal's signature as candidate name on degree marksheets)
+      const aiNamePatch: any = {};
+      if (pi.firstName) aiNamePatch.firstName = pi.firstName;
+      if (pi.middleName) aiNamePatch.middleName = pi.middleName;
+      if (pi.lastName) aiNamePatch.lastName = pi.lastName;
+      if (pi.candidateName) aiNamePatch.fullNameMarksheet = pi.candidateName;
+
       const existingFirstName = piForm.get('firstName')?.value;
+      const existingMiddleName = piForm.get('middleName')?.value;
       const existingLastName = piForm.get('lastName')?.value;
+      const existingName = [existingFirstName, existingMiddleName, existingLastName].filter(Boolean).join(' ').trim();
+      const aiDetectedName = [pi.firstName, pi.middleName, pi.lastName].filter(Boolean).join(' ').trim() || (pi.candidateName || '').trim();
+
+      const normalizeName = (val: string) => (val || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const shouldAskNameOverwrite =
+        !!existingName &&
+        !!aiDetectedName &&
+        normalizeName(existingName) !== normalizeName(aiDetectedName);
+
       if (existingFirstName) {
         delete patchValues.firstName;
         delete patchValues.middleName;
@@ -10534,6 +10665,28 @@ export class SharedAdmissionFormComponent implements OnInit {
       console.log('Available Gender Options:', this.formData.personalInfo.gender.values);
       console.log('Patching Personal Info:', patchValues);
       piForm.patchValue(patchValues);
+
+      if (shouldAskNameOverwrite) {
+        const confirmRef = this.dialog.open(ConfirmDialogComponent, {
+          height: 'auto',
+          width: '520px',
+          autoFocus: false
+        });
+
+        confirmRef.componentInstance.modalTitle = 'Update Name From Marksheet?';
+        confirmRef.componentInstance.innerHtmlMsg =
+          `Current name: <b>${existingName}</b><br/>Detected from marksheet: <b>${aiDetectedName}</b><br/><br/>Do you want to replace current name with marksheet name?`;
+        confirmRef.componentInstance.yesText = 'OK';
+        confirmRef.componentInstance.noText = 'Keep Current';
+        confirmRef.componentInstance.dialogRef = confirmRef;
+
+        confirmRef.afterClosed().subscribe((result) => {
+          if (result === 'ok') {
+            piForm.patchValue(aiNamePatch);
+            this._snackBarMsgComponent.openSnackBar('Name updated from marksheet.', 'x', 'success-snackbar', 3000);
+          }
+        });
+      }
 
     }
 
@@ -10574,27 +10727,65 @@ export class SharedAdmissionFormComponent implements OnInit {
       const academicValues: any = {};
       if (ai.board) academicValues.boardName = ai.board;
       if (ai.schoolName) academicValues.schoolName = ai.schoolName;
-      if (ai.passingYear) {
-        const parsedYear = Number(ai.passingYear);
-        academicValues.yearOfPassing = parsedYear || ai.passingYear;
-        academicValues.yearAppeared = parsedYear || ai.passingYear;
-      }
-      if (ai.passingMonth) {
-        // Map month name to ID based on typical monthsList structure (1="January", ... 10="October")
+
+      const resolveYearAppearedValue = (yearValue: any) => {
+        if (globalFunctions.isEmpty(yearValue)) return yearValue;
+        const targetYear = String(yearValue).trim();
+        if (!Array.isArray(this.yearAppearedList) || this.yearAppearedList.length === 0) {
+          const numYear = Number(targetYear);
+          return Number.isNaN(numYear) ? targetYear : numYear;
+        }
+
+        const matched = this.yearAppearedList.find((item: any) => {
+          const keys = [item?.id, item?.value, item?.name, item?.title, item?.year, item?.label]
+            .filter((v: any) => !globalFunctions.isEmpty(v))
+            .map((v: any) => String(v).toLowerCase());
+          return keys.some((v: string) => v === targetYear.toLowerCase() || v.includes(targetYear.toLowerCase()));
+        });
+
+        if (matched && !globalFunctions.isEmpty(matched.id)) {
+          return matched.id;
+        }
+
+        const numYear = Number(targetYear);
+        return Number.isNaN(numYear) ? targetYear : numYear;
+      };
+
+      const resolveMonthAppearedValue = (monthValue: any) => {
+        if (globalFunctions.isEmpty(monthValue)) return monthValue;
+        const monthStr = String(monthValue).toLowerCase().trim();
+
+        if (Array.isArray(this.monthsList) && this.monthsList.length > 0) {
+          const monthMatch = this.monthsList.find((item: any) => {
+            const name = String(item?.name || item?.value || item?.month || '').toLowerCase();
+            return name === monthStr || name.startsWith(monthStr.substring(0, 3));
+          });
+          if (monthMatch && !globalFunctions.isEmpty(monthMatch.id)) {
+            return monthMatch.id;
+          }
+        }
+
         const monthMap: any = {
           'january': 1, 'february': 2, 'march': 3, 'april': 4,
           'may': 5, 'june': 6, 'july': 7, 'august': 8,
-          'september': 9, 'october': 10, 'november': 11, 'december': 12
+          'september': 9, 'october': 10, 'november': 11, 'december': 12,
+          'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4,
+          'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9,
+          'oct': 10, 'nov': 11, 'dec': 12
         };
-        const monthStr = String(ai.passingMonth).toLowerCase().trim();
-        let monthId = monthMap[monthStr];
-        // Handle abbreviations (e.g. 'jan', 'oct') if exact match fails
-        if (!monthId && monthStr.length >= 3) {
-            monthId = monthMap[Object.keys(monthMap).find(k => k.startsWith(monthStr.substring(0, 3))) || ''];
-        }
-        
-        academicValues.monthOfPassing = monthId || ai.passingMonth;
-        academicValues.monthAppeared = monthId || ai.passingMonth;
+
+        return monthMap[monthStr] || monthMap[monthStr.substring(0, 3)] || monthValue;
+      };
+
+      if (ai.passingYear) {
+        const parsedYear = Number(ai.passingYear);
+        academicValues.yearOfPassing = parsedYear || ai.passingYear;
+        academicValues.yearAppeared = resolveYearAppearedValue(ai.passingYear);
+      }
+      if (ai.passingMonth) {
+        const resolvedMonth = resolveMonthAppearedValue(ai.passingMonth);
+        academicValues.monthOfPassing = resolvedMonth;
+        academicValues.monthAppeared = resolvedMonth;
       }
       if (ai.atktCount !== undefined && ai.atktCount !== null && String(ai.atktCount).trim() !== '') {
         academicValues.noOfATKT = Number(ai.atktCount) || 0;

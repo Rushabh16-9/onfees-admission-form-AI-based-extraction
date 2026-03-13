@@ -35,8 +35,8 @@
       <h3 style="margin-top: 0; color: #2e7d32;">✓ Data Extracted Successfully</h3>
     </div>
     <div style="margin-top: 20px; width: 100%; display: flex; justify-content: flex-end;">
-      <button mat-raised-button color="primary" [disabled]="!sem1File || sem1IsVerifying || sem1IsExtracting || sem1VerificationFailed || !sem1ExtractedData" (click)="submit()">
-        Submit & Auto-fill Form
+      <button mat-raised-button color="primary" [disabled]="!sem1File || sem1IsVerifying || sem1IsExtracting || sem1VerificationFailed || (!isVerificationOnlyDoc && !sem1ExtractedData)" (click)="submit()">
+        {{ isVerificationOnlyDoc ? 'Submit' : 'Submit & Auto-fill Form' }}
       </button>
     </div>
   </div>
@@ -101,11 +101,12 @@
   </div>
 
   <!-- Dual Upload Submit Button -->
-  <div *ngIf="isDualUpload" style="margin-top: 20px; width: 100%; display: flex; justify-content: flex-end; padding-right: 10px; padding-bottom: 20px;">
+  <div *ngIf="isDualUpload" style="margin-top: 20px; width: 100%; display: flex; flex-direction: column; align-items: flex-end; padding-right: 10px; padding-bottom: 20px;">
     <button mat-raised-button color="primary" 
-      [disabled]="!sem1ExtractedData || !sem2ExtractedData" 
+      [disabled]="!sem1ExtractedData || !sem2ExtractedData || isSubmitting" 
       (click)="submit()">
-      Submit Both & Auto-fill Forms
+      {{ isSubmitting ? 'Uploading...' : 'Submit Both & Auto-fill Forms' }}
     </button>
+    <div *ngIf="submitError" style="color: #f44336; margin-top: 8px; font-size: 13px;">{{ submitError }}</div>
   </div>
 </mat-dialog-content>t>

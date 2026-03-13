@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable, throwError } from 'rxjs';
-import { catchError, map } from 'rxjs/operators';
+import { catchError, map, timeout } from 'rxjs/operators';
 import { ExtractionResponse, VerificationResponse } from '../models/document-extraction.model';
 
 @Injectable({
@@ -25,6 +25,7 @@ export class DocumentExtractionService {
 
         return this.http.post<ExtractionResponse>(`${this.API_URL}/extract-marksheet`, formData)
             .pipe(
+                timeout(30000),
                 catchError(error => {
                     console.error('Extraction error:', error);
                     const message = error.error?.error
@@ -45,11 +46,25 @@ export class DocumentExtractionService {
 
         return this.http.post<VerificationResponse>(`${this.API_URL}/verify-document`, formData)
             .pipe(
+                timeout(30000),
                 catchError(error => {
                     console.error('Verification error:', error);
                     return throwError(() => new Error(error.error?.error || 'Failed to verify document'));
                 })
             );
+    }
+
+    /**
+     * Upload a document image/PDF to the backend upload endpoint
+     */
+    uploadDocImage(file: File, docId: any): Observable<any> {
+        const fd = new FormData();
+        fd.append('document', file, file.name || 'upload');
+        fd.append('docId', String(docId || ''));
+        return this.http.post<any>(`${this.API_URL}/Admission/uploadDocImage`, fd).pipe(
+            timeout(30000),
+            catchError(error => throwError(() => error))
+        );
     }
 
     /**

@@ -3,6 +3,7 @@ import { MatLegacyDialogRef as MatDialogRef, MAT_LEGACY_DIALOG_DATA as MAT_DIALO
 import * as globalFunctions from 'app/global/globalFunctions';
 import { DocumentExtractionService } from 'app/shared/services/document-extraction.service';
 import { ExtractedMarksheetData } from 'app/shared/models/document-extraction.model';
+import { forkJoin } from 'rxjs';
 
 @Component({
     selector: 'app-document-upload-dialog',
@@ -12,6 +13,11 @@ import { ExtractedMarksheetData } from 'app/shared/models/document-extraction.mo
 export class DocumentUploadDialogComponent implements OnInit {
 
     isDualUpload: boolean = false;
+    isVerificationOnlyDoc: boolean = false;
+    isSubmitting: boolean = false;
+    submitError: string = '';
+    private readonly maxFileSizeMbMarksheet: number = 20;
+    private readonly maxFileSizeMbVerificationOnly: number = 2;
 
     // --- Sem 1 State ---
     sem1File: File | null = null;
@@ -47,9 +53,13 @@ export class DocumentUploadDialogComponent implements OnInit {
         if (docNameLower.includes('sem 1 marksheet')) {
             this.isDualUpload = true; // Flag indicates this modal should show Sem 1 & Sem 2 side-by-side
         }
+        this.isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(docNameLower);
 
         if (this.data.file) {
             this.sem1File = this.data.file;
+            if (!this.validateSelectedFile(this.sem1File, 1)) {
+                return;
+            }
             if (this.sem1File.type.startsWith('image/')) {
                 const reader = new FileReader();
                 reader.onload = e => this.sem1ImagePreviewUrl = reader.result as string;
@@ -62,6 +72,11 @@ export class DocumentUploadDialogComponent implements OnInit {
     onFileSelected(event: any, docIndex: number): void {
         if (event.target.files && event.target.files.length > 0) {
             const file = event.target.files[0];
+
+            if (!this.validateSelectedFile(file, docIndex)) {
+                event.target.value = '';
+                return;
+            }
             
             if (docIndex === 1) {
                 this.sem1File = file;
@@ -94,6 +109,39 @@ export class DocumentUploadDialogComponent implements OnInit {
         }
     }
 
+    private validateSelectedFile(file: File, docIndex: number): boolean {
+        const maxFileSizeMb = this.isVerificationOnlyDoc ? this.maxFileSizeMbVerificationOnly : this.maxFileSizeMbMarksheet;
+        const fileSizeInMb = file.size / (1024 * 1024);
+        if (fileSizeInMb <= maxFileSizeMb) {
+            return true;
+        }
+
+        const roundedSize = Math.round(fileSizeInMb * 100) / 100;
+        const message = `File size ${roundedSize} MB exceeds limit of ${maxFileSizeMb} MB. Please upload a smaller file.`;
+
+        if (docIndex === 1) {
+            this.sem1File = null;
+            this.sem1ImagePreviewUrl = null;
+            this.sem1ExtractedData = null;
+            this.sem1IsExtracting = false;
+            this.sem1IsVerifying = false;
+            this.sem1VerificationFailed = true;
+            this.sem1VerificationMessage = '✗ File too large';
+            this.sem1ExtractionError = message;
+        } else {
+            this.sem2File = null;
+            this.sem2ImagePreviewUrl = null;
+            this.sem2ExtractedData = null;
+            this.sem2IsExtracting = false;
+            this.sem2IsVerifying = false;
+            this.sem2VerificationFailed = true;
+            this.sem2VerificationMessage = '✗ File too large';
+            this.sem2ExtractionError = message;
+        }
+
+        return false;
+    }
+
     extractData(docIndex: number): void {
         const file = docIndex === 1 ? this.sem1File : this.sem2File;
         if (!file) return;
@@ -113,6 +161,58 @@ export class DocumentUploadDialogComponent implements OnInit {
             this.sem2IsVerifying = true;
             this.sem2VerificationMessage = 'Verifying document...';
             this.sem2ExtractionError = '';
+        }
+
+        if (this.isVerificationOnlyDoc) {
+            this.extractionService.verifyDocument(file, docName).subscribe({
+                next: (response) => {
+                    const verification = response?.verification;
+                    const isValid = !!(response?.success && verification?.isValid);
+                    const reason = verification?.reason || response?.error || '';
+
+                    if (docIndex === 1) {
+                        this.sem1IsExtracting = false;
+                        this.sem1IsVerifying = false;
+                        if (isValid) {
+                            this.sem1VerificationFailed = false;
+                            this.sem1VerificationMessage = `✓ Verified as ${docName}`;
+                            this.sem1ExtractedData = null;
+                        } else {
+                            this.sem1VerificationFailed = true;
+                            this.sem1VerificationMessage = '✗ Verification failed';
+                            this.sem1ExtractionError = reason || 'Uploaded file is not a valid document.';
+                        }
+                    } else {
+                        this.sem2IsExtracting = false;
+                        this.sem2IsVerifying = false;
+                        if (isValid) {
+                            this.sem2VerificationFailed = false;
+                            this.sem2VerificationMessage = `✓ Verified as ${docName}`;
+                            this.sem2ExtractedData = null;
+                        } else {
+                            this.sem2VerificationFailed = true;
+                            this.sem2VerificationMessage = '✗ Verification failed';
+                            this.sem2ExtractionError = reason || 'Uploaded file is not a valid document.';
+                        }
+                    }
+                },
+                error: (error) => {
+                    if (docIndex === 1) {
+                        this.sem1IsExtracting = false;
+                        this.sem1IsVerifying = false;
+                        this.sem1VerificationFailed = true;
+                        this.sem1VerificationMessage = '✗ Verification failed';
+                        this.sem1ExtractionError = error?.message || 'Failed to verify document.';
+                    } else {
+                        this.sem2IsExtracting = false;
+                        this.sem2IsVerifying = false;
+                        this.sem2VerificationFailed = true;
+                        this.sem2VerificationMessage = '✗ Verification failed';
+                        this.sem2ExtractionError = error?.message || 'Failed to verify document.';
+                    }
+                }
+            });
+            return;
         }
 
         this.extractionService.extractMarksheetData(file, docName).subscribe({
@@ -161,7 +261,7 @@ export class DocumentUploadDialogComponent implements OnInit {
 
     submit(): void {
         if (!this.isDualUpload) {
-            if (this.sem1File && this.sem1ExtractedData) {
+            if (this.sem1File && (this.sem1ExtractedData || (this.isVerificationOnlyDoc && !this.sem1VerificationFailed && !this.sem1IsVerifying))) {
                 this.dialogRef.close({
                     success: true,
                     document_id: this.data.document_id,
@@ -170,16 +270,32 @@ export class DocumentUploadDialogComponent implements OnInit {
                 });
             }
         } else {
-            // Dual upload scenario
+            // Dual upload: upload both files to server first, then close with filenames
             if (this.sem1File && this.sem1ExtractedData && this.sem2File && this.sem2ExtractedData) {
-                this.dialogRef.close({
-                    success: true,
-                    document_id: 389, // Returning as Sem 2, but carrying Sem 1 payload
-                    file: this.sem2File,
-                    extractedData: this.sem2ExtractedData,
-                    sem1Data: {
-                        file: this.sem1File,
-                        extractedData: this.sem1ExtractedData
+                this.isSubmitting = true;
+                this.submitError = '';
+                const sem1Upload$ = this.extractionService.uploadDocImage(this.sem1File, this.data.document_id);
+                const sem2Upload$ = this.extractionService.uploadDocImage(this.sem2File, 389);
+                forkJoin({ sem1: sem1Upload$, sem2: sem2Upload$ }).subscribe({
+                    next: (results: any) => {
+                        this.isSubmitting = false;
+                        this.dialogRef.close({
+                            success: true,
+                            document_id: this.data.document_id,
+                            sem2_document_id: 389,
+                            fileName: results.sem2?.dataJson?.fileName || '',
+                            extractedData: this.sem2ExtractedData,
+                            sem1Data: {
+                                document_id: this.data.document_id,
+                                fileName: results.sem1?.dataJson?.fileName || '',
+                                extractedData: this.sem1ExtractedData
+                            }
+                        });
+                    },
+                    error: (err: any) => {
+                        this.isSubmitting = false;
+                        this.submitError = 'Upload failed. Please check the server connection and try again.';
+                        console.error('[DIALOG] Dual upload error:', err);
                     }
                 });
             }

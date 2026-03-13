@@ -279,8 +279,13 @@ export class UploadDocumentsComponent implements OnInit {
 
         dialogRef.afterClosed().subscribe(result => {
           if (result && result.success) {
-            if (ext.toUpperCase() === 'PDF') {
-              this.browsedDocData(event.target.files, docIndex, bunchIndex, ext);
+            const verifiedFile = result.file || file;
+            const resolvedExt = (verifiedFile?.name || '').toUpperCase().split('.').pop() || ext;
+            const normalizedDocTitle = (docTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
+            const isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(normalizedDocTitle);
+
+            if (resolvedExt.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
+              this.browsedDocData(verifiedFile, docIndex, bunchIndex, resolvedExt);
             } else {
               this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
             }
@@ -297,13 +302,14 @@ export class UploadDocumentsComponent implements OnInit {
   browsedDocData(data, docIndex, bunchIndex, ext = '') {
 
     const documents = this.allDocuments[docIndex];
+    const fileObj: any = (data && data[0]) ? data[0] : data;
     documents['controls'].docError.setValue(false);
     documents['controls'].isBrowsed.setValue(true);
-    documents['controls'].docToUpload.setValue(data);
+    documents['controls'].docToUpload.setValue(fileObj);
 
     let postData = {
       docId: documents['controls'].docId.value,
-      docValue: data
+      docValue: fileObj
     }
 
     if (ext == 'PDF') {
@@ -330,7 +336,15 @@ export class UploadDocumentsComponent implements OnInit {
 
   uploadPdf(values: any, docIndex = 0) {
 
-    let file: File = values.docValue[0];
+    let file: File = values.docValue;
+    if (!file && values.docValue && values.docValue[0]) {
+      file = values.docValue[0];
+    }
+    if (!file) {
+      this.allEventEmitters.showLoader.emit(false);
+      this._snackBarMsgComponent.openSnackBar('Invalid file data. Please re-upload document.', 'x', 'error-snackbar', 5000);
+      return;
+    }
 
     this.allEventEmitters.showLoader.emit(true);
     this._admissionService.uploadPdf(file, values.docId, this.panelMode).subscribe(data => {
@@ -339,7 +353,11 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
-          this.allDocuments[docIndex].controls.uploadedFile.setValue(data.dataJson.uploadedFile);
+          const uploadedDocRef = data?.dataJson?.uploadedFile || data?.dataJson?.fileUrl || data?.dataJson?.fileName || '';
+          this.allDocuments[docIndex].controls.uploadedFile.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.docToUpload.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.isUploaded.setValue(true);
+          this.allDocuments[docIndex].controls.docError.setValue(false);
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'success-snackbar', 5000);
         } else if (data.status == 0) {
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'error-snackbar', 5000);
@@ -355,7 +373,15 @@ export class UploadDocumentsComponent implements OnInit {
 
   uploadAtktPdf(values: any, docIndex = 0) {
 
-    let file: File = values.docValue[0];
+    let file: File = values.docValue;
+    if (!file && values.docValue && values.docValue[0]) {
+      file = values.docValue[0];
+    }
+    if (!file) {
+      this.allEventEmitters.showLoader.emit(false);
+      this._snackBarMsgComponent.openSnackBar('Invalid file data. Please re-upload document.', 'x', 'error-snackbar', 5000);
+      return;
+    }
 
     this.allEventEmitters.showLoader.emit(true);
     this._atktService.uploadPdf(file, values.docId, this.panelMode).subscribe(data => {
@@ -364,7 +390,11 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
-          this.allDocuments[docIndex].controls.uploadedFile.setValue(data.dataJson.uploadedFile);
+          const uploadedDocRef = data?.dataJson?.uploadedFile || data?.dataJson?.fileUrl || data?.dataJson?.fileName || '';
+          this.allDocuments[docIndex].controls.uploadedFile.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.docToUpload.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.isUploaded.setValue(true);
+          this.allDocuments[docIndex].controls.docError.setValue(false);
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'success-snackbar', 5000);
         } else if (data.status == 0) {
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'error-snackbar', 5000);
@@ -387,7 +417,11 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
-          this.allDocuments[docIndex].controls.uploadedFile.setValue(data.dataJson.uploadedFile);
+          const uploadedDocRef = data?.dataJson?.uploadedFile || data?.dataJson?.fileUrl || data?.dataJson?.fileName || '';
+          this.allDocuments[docIndex].controls.uploadedFile.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.docToUpload.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.isUploaded.setValue(true);
+          this.allDocuments[docIndex].controls.docError.setValue(false);
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'success-snackbar', 5000);
         } else if (data.status == 0) {
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'error-snackbar', 5000);
@@ -410,7 +444,11 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
-          this.allDocuments[docIndex].controls.uploadedFile.setValue(data.dataJson.uploadedFile);
+          const uploadedDocRef = data?.dataJson?.uploadedFile || data?.dataJson?.fileUrl || data?.dataJson?.fileName || '';
+          this.allDocuments[docIndex].controls.uploadedFile.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.docToUpload.setValue(uploadedDocRef);
+          this.allDocuments[docIndex].controls.isUploaded.setValue(true);
+          this.allDocuments[docIndex].controls.docError.setValue(false);
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'success-snackbar', 5000);
         } else if (data.status == 0) {
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'error-snackbar', 5000);
@@ -479,6 +517,8 @@ export class UploadDocumentsComponent implements OnInit {
 
   afterDocumentsFormSubmit() {
 
+    this.allEventEmitters.showLoader.emit(false);
+
     let authUrl = globalFunctions.getLocalStorage('authUrl', 'JsonParse');
     if (!globalFunctions.isEmpty(authUrl)) {
       window.location.href = authUrl;
@@ -527,7 +567,11 @@ export class UploadDocumentsComponent implements OnInit {
   }
 
   viewDoc(docUrl) {
-    var win = window.open(docUrl, '_blank');
+    let resolvedUrl = docUrl;
+    if (docUrl && !/^https?:\/\//i.test(docUrl) && docUrl.indexOf('/') === -1 && docUrl.indexOf('\\') === -1) {
+      resolvedUrl = `http://localhost:3000/uploads/${docUrl}`;
+    }
+    var win = window.open(resolvedUrl, '_blank');
     if (win) {
       win.focus();
     } else {
