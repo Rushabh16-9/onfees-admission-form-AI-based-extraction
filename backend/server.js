@@ -121,12 +121,6 @@ Return ONLY a valid JSON object with this exact structure. No markdown, no expla
     "marksOutof": "",
     "percentage": "",
     "cgpa": "",
-<<<<<<< HEAD
-    "grade": "",
-    "result": "",
-    "stream": "",
-    "subjects": []
-=======
     "sgpa": "",
     "semester": "",
     "grade": "",
@@ -139,27 +133,10 @@ Return ONLY a valid JSON object with this exact structure. No markdown, no expla
         "marks": ""
       }
     ]
->>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
   }
 }
 
 Rules:
-<<<<<<< HEAD
-- notAMarksheet: set true ONLY if the document does NOT match the requested "${expectedDocType || 'SSC or HSC Marksheet'}" (e.g. uploading HSC when SSC is requested).
-- invalidReason: short explanation if notAMarksheet is true (e.g., "This is an HSC marksheet, but an SSC marksheet was requested"), otherwise empty string
-- examination: 'HSC' or 'SSC'
-- result: 'PASS' or 'FAIL'
-- passingYear: YYYY format (e.g., 2021)
-- percentage: number only (e.g., 85.50)
-- seatNo: alphanumeric seat/roll number
-- candidateName: full name exactly as printed on document
-- mothersName: mother's name exactly as printed
-- abcId: ABC ID or APAAR ID if visible on the marksheet
-- IMPORTANT - Indian name format is SURNAME FIRSTNAME MIDDLENAME:
-  - lastName = first word, firstName = second word, middleName = remaining words
-  - If 2 words: lastName = first, firstName = second, middleName = ''
-- Do not leave firstName/middleName/lastName empty if candidateName is filled`;
-=======
 - notAMarksheet: set true ONLY if the document is completely unrelated or explicitly a mismatch for "${expectedDocType || 'Marksheet'}" (e.g., uploading HSC when SSC is requested). Treat semester marksheets valid if "Semester" or "Degree" is expected.
 - invalidReason: short explanation if notAMarksheet is true.
 - examination: 'HSC', 'SSC', 'Diploma', 'Degree', or the specific exam name.
@@ -191,7 +168,6 @@ CANDIDATE NAME EXTRACTION (CRITICAL RULES):
 - Do not leave firstName/middleName/lastName empty if candidateName is filled.
 - DEGREE MARKS/TABLES: Look for "Total Marks", "∑CG", "∑C", "Marks Obtained" at the bottom of the marks table. Copy the printed totals (e.g., 397 for obtained, 550 for out of).
 - subjects: For each subject row in the grade card, extract the subject name and the total marks obtained for that subject.`;
->>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
 
     const MAX_RETRIES = 3;
     let lastErr;
@@ -219,8 +195,6 @@ CANDIDATE NAME EXTRACTION (CRITICAL RULES):
 
             const parsed = JSON.parse(content);
 
-<<<<<<< HEAD
-=======
             // DEBUG: Log name fields specifically
             console.log('>>> candidateName from AI:', parsed.personalInfo?.candidateName);
             console.log('>>> firstName:', parsed.personalInfo?.firstName);
@@ -228,8 +202,6 @@ CANDIDATE NAME EXTRACTION (CRITICAL RULES):
             console.log('>>> board:', parsed.academicInfo?.board);
             console.log('>>> marksObtained:', parsed.academicInfo?.marksObtained);
             console.log('>>> marksOutof:', parsed.academicInfo?.marksOutof);
-
->>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
             const fullName = (parsed.personalInfo?.candidateName || '').trim();
             if (fullName && !parsed.personalInfo.firstName) {
                 const parts = fullName.split(/\s+/);
@@ -292,11 +264,7 @@ app.post('/api/extract-marksheet', uploadMiddleware, async (req, res) => {
         if (extractedData.notAMarksheet) {
             console.warn('Gemini identified document as invalid:', extractedData.invalidReason);
             return res.status(400).json({
-<<<<<<< HEAD
-                error: `Invalid document: ${extractedData.invalidReason || 'This does not appear to be a valid SSC or HSC Marksheet. Please upload the correct document.'}`
-=======
                 error: `Invalid document: ${extractedData.invalidReason || 'This does not appear to be a valid marksheet. Please upload the correct document.'}`
->>>>>>> 0048411 (feat: AI-based Sem1/Sem2 marksheet extraction with dual upload dialog, ATKT/month/year parsing, and robust form save debugging)
             });
         }
 
