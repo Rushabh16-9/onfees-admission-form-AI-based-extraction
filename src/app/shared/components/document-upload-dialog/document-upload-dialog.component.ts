@@ -50,9 +50,8 @@ export class DocumentUploadDialogComponent implements OnInit {
 
     ngOnInit(): void {
         const docNameLower = this.data.document_name.toLowerCase();
-        if (docNameLower.includes('sem 1 marksheet')) {
-            this.isDualUpload = true; // Flag indicates this modal should show Sem 1 & Sem 2 side-by-side
-        }
+        const isSem1Title = /(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(docNameLower) && /mark\s*sheet|marksheet/.test(docNameLower);
+        this.isDualUpload = this.data.document_id === 390 || isSem1Title;
         this.isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(docNameLower);
 
         if (this.data.file) {
@@ -274,19 +273,21 @@ export class DocumentUploadDialogComponent implements OnInit {
             if (this.sem1File && this.sem1ExtractedData && this.sem2File && this.sem2ExtractedData) {
                 this.isSubmitting = true;
                 this.submitError = '';
-                const sem1Upload$ = this.extractionService.uploadDocImage(this.sem1File, this.data.document_id);
+                const sem1DocId = 390;
+                const sem2DocId = 389;
+                const sem1Upload$ = this.extractionService.uploadDocImage(this.sem1File, sem1DocId);
                 const sem2Upload$ = this.extractionService.uploadDocImage(this.sem2File, 389);
                 forkJoin({ sem1: sem1Upload$, sem2: sem2Upload$ }).subscribe({
                     next: (results: any) => {
                         this.isSubmitting = false;
                         this.dialogRef.close({
                             success: true,
-                            document_id: this.data.document_id,
-                            sem2_document_id: 389,
+                            document_id: sem1DocId,
+                            sem2_document_id: sem2DocId,
                             fileName: results.sem2?.dataJson?.fileName || '',
                             extractedData: this.sem2ExtractedData,
                             sem1Data: {
-                                document_id: this.data.document_id,
+                                document_id: sem1DocId,
                                 fileName: results.sem1?.dataJson?.fileName || '',
                                 extractedData: this.sem1ExtractedData
                             }

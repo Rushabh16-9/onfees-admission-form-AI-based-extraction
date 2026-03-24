@@ -122,6 +122,8 @@ Return ONLY a valid JSON object with this exact structure. No markdown, no expla
     "percentage": "",
     "cgpa": "",
     "sgpa": "",
+        "creditPoints": "",
+        "creditGrade": "",
     "semester": "",
     "grade": "",
     "result": "",
@@ -145,9 +147,12 @@ Rules:
 - passingMonth: Identify the month the exam was held or passed. E.g., if it says "October 2024", extract "October". Extract the full English month name.
 - percentage: number only (e.g., 85.50). If only SGPA/CGPA is present, leave empty.
 - sgpa/cgpa: number only (e.g., 8.5)
+- creditPoints: extract the total grade points / total credits points if printed (e.g., "∑CG", "Credit Points", "Total Grade Points").
+- creditGrade: extract the aggregate credit grade / final credit grade if printed.
 - semester: extract the semester number if visible (e.g., "1", "2", "6").
 - seatNo: alphanumeric seat/roll number or PRN.
 - atktCount: Look at the marks/grades table. Count how many subjects have "F" (Fail), "FF", or "ABS" (Absent), or require a re-attempt. If the student passed all subjects, return "0". If there are 2 failed subjects, return "2".
+- STRICT SEMESTER MATCH: If expectedDocType indicates "Sem 1" and document is Sem 2 (or vice versa), set notAMarksheet=true with an invalidReason like "Uploaded document is Semester 2 marksheet, but Semester 1 marksheet is required."
 
 CANDIDATE NAME EXTRACTION (CRITICAL RULES):
   Primary Anchor: Find the specific text label "Name of Candidate" or "Candidate Name" in the top section of the document (top 30%).
@@ -194,6 +199,25 @@ CANDIDATE NAME EXTRACTION (CRITICAL RULES):
             console.log('---------------------------');
 
             const parsed = JSON.parse(content);
+
+            const expectedText = (expectedDocType || '').toString().toLowerCase();
+            const expectedSem = /\b(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(expectedText)
+                ? '1'
+                : /\b(sem|semester|semister)\s*[-_]?\s*(2|ii)\b/.test(expectedText)
+                    ? '2'
+                    : '';
+            const examText = (parsed?.academicInfo?.examination || '').toString().toLowerCase();
+            const extractedSem = (parsed?.academicInfo?.semester || '').toString().trim()
+                || (/\b(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(examText)
+                    ? '1'
+                    : /\b(sem|semester|semister)\s*[-_]?\s*(2|ii)\b/.test(examText)
+                        ? '2'
+                        : '');
+
+            if (expectedSem && extractedSem && expectedSem !== extractedSem) {
+                parsed.notAMarksheet = true;
+                parsed.invalidReason = `Uploaded document is Semester ${extractedSem} marksheet, but Semester ${expectedSem} marksheet is required.`;
+            }
 
             // DEBUG: Log name fields specifically
             console.log('>>> candidateName from AI:', parsed.personalInfo?.candidateName);

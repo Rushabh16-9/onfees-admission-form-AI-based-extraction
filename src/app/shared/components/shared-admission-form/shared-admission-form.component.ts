@@ -392,6 +392,7 @@ export class SharedAdmissionFormComponent implements OnInit {
   studentDeclarationTitle: string = '';
   passportSizePhotoInfoLable: string = '';
   passportSizeSignInfoLable: string = '';
+  isNameChangeFromAi: number = 0;
 
   constructor(
     private breakpointObserver: BreakpointObserver,
@@ -640,10 +641,14 @@ export class SharedAdmissionFormComponent implements OnInit {
 
   setFormValues(formData) {
 
-    if (formData.formFillingInstructions.display) {
-      // Trigger upload popup first (it will appear behind)
+    // Always trigger required-doc upload popup for admission flow.
+    // It is guarded to show once per session in AdmissionFormComponent.
+    if (this.panelMode === 'admission') {
       this.triggerUploadPopup.emit();
-      // Delay instructions popup to ensure upload popup renders first
+    }
+
+    if (formData.formFillingInstructions.display) {
+      // Delay instructions popup so upload popup opens first.
       setTimeout(() => {
         this.openInfoDialog(formData.formFillingInstructions);
       }, 100);
@@ -680,6 +685,9 @@ export class SharedAdmissionFormComponent implements OnInit {
     this.filteredBoardList = formData.educationInfo.boardList;
 
     this.formData = formData;
+    this.isNameChangeFromAi = Number(
+      formData?.personalInfo?.isNameChangeFromAi ?? formData?.personalInfo?.is_name_change_from_ai ?? 0
+    ) || 0;
     this.formSetup = formData.formSetup;
     this.formLock = formData.formLock;
     this.formLockNote = formData.formLockNote;
@@ -7965,6 +7973,8 @@ export class SharedAdmissionFormComponent implements OnInit {
         dialogRef.afterClosed().subscribe(result => {
           if (result && result.success) {
             console.log('Dialog success, uploading file and patching data...');
+            const SEM1_DOC_ID = 390;
+            const SEM2_DOC_ID = 389;
 
             const resolveDocumentPosition = (preferredDocId: any, semesterNo: number, fallbackDocIndex: number, fallbackBunchIndex: number) => {
               let resolvedDocIndex = fallbackDocIndex;
@@ -8014,7 +8024,7 @@ export class SharedAdmissionFormComponent implements OnInit {
             // If we have Sem 1 data from dual upload (file was already uploaded inside the dialog)
             if (result.sem1Data) {
               const sem1Resolved = resolveDocumentPosition(
-                result.sem1Data.document_id || documents['controls'].docId.value,
+                result.sem1Data.document_id || SEM1_DOC_ID || documents['controls'].docId.value,
                 1,
                 docIndex,
                 bunchIndex
@@ -8042,7 +8052,7 @@ export class SharedAdmissionFormComponent implements OnInit {
             
             // Find Sem 2's grid coordinates if this was a sequence upload
             const sem2Resolved = resolveDocumentPosition(
-              result.sem2_document_id || result.document_id,
+              result.sem2_document_id || SEM2_DOC_ID || result.document_id,
               2,
               docIndex,
               bunchIndex
@@ -9544,6 +9554,8 @@ export class SharedAdmissionFormComponent implements OnInit {
     this.categoryFormValues = this.categoryForm.getRawValue();
 
     this.personalInfoFormValues = this.personalInfoForm.getRawValue();
+    this.personalInfoFormValues['isNameChangeFromAi'] = this.isNameChangeFromAi;
+    this.personalInfoFormValues['is_name_change_from_ai'] = this.isNameChangeFromAi;
     this.personalInfoFormValues['dob'] = globalFunctions.format(new Date(this.personalInfoForm.get("dob").value), 'input');
     this.personalInfoFormValues['aadharDob'] = globalFunctions.format(new Date(this.personalInfoForm.get("aadharDob").value), 'input');
     this.personalInfoFormValues['passportDetails']['issueDate'] = globalFunctions.format(new Date(this.personalInfoForm.controls.passportDetails.get('issueDate').value), 'input');
@@ -9621,6 +9633,8 @@ export class SharedAdmissionFormComponent implements OnInit {
       'finalSave': finalSave,
       'stepName': tab.stepName,
       'page': this.panelMode,
+      'isNameChangeFromAi': this.isNameChangeFromAi,
+      'is_name_change_from_ai': this.isNameChangeFromAi,
     };
 
     const _dbgCommon = globalFunctions.getCommonPostValues();
@@ -9628,6 +9642,8 @@ export class SharedAdmissionFormComponent implements OnInit {
       finalSave: postParam.finalSave,
       stepName: postParam.stepName,
       page: postParam.page,
+      isNameChangeFromAi: postParam.isNameChangeFromAi,
+      is_name_change_from_ai: postParam.is_name_change_from_ai,
       personalInfo_firstName: postParam.personalInfo?.firstName,
       educationInfo_keys: postParam.educationInfo ? Object.keys(postParam.educationInfo) : 'MISSING',
       applicantId: _dbgCommon.applicantId,
@@ -9767,9 +9783,22 @@ export class SharedAdmissionFormComponent implements OnInit {
       'finalSave': finalSave,
       'stepName': tab.stepName,
       'page': this.panelMode,
+      'isNameChangeFromAi': this.isNameChangeFromAi,
+      'is_name_change_from_ai': this.isNameChangeFromAi,
       'formId': this.formDetails.formId,
       'universityApplicationFormNo': this.universityApplicationFormNo.value,
     };
+
+    console.log('[SAVE_INSTITUTE_FORM] Sending payload:', {
+      finalSave: postParam.finalSave,
+      stepName: postParam.stepName,
+      page: postParam.page,
+      isNameChangeFromAi: postParam.isNameChangeFromAi,
+      is_name_change_from_ai: postParam.is_name_change_from_ai,
+      personalInfoFlagCamel: postParam.personalInfo?.isNameChangeFromAi,
+      personalInfoFlagSnake: postParam.personalInfo?.is_name_change_from_ai,
+      formId: postParam.formId,
+    });
 
     this._institutesService.saveAdmissionForm(postParam, this.passportSizePhotoToUpload, this.signatureImageToUpload, this.parentSignatureImageToUpload).subscribe(data => {
 
@@ -10641,6 +10670,7 @@ export class SharedAdmissionFormComponent implements OnInit {
       if (pi.middleName) aiNamePatch.middleName = pi.middleName;
       if (pi.lastName) aiNamePatch.lastName = pi.lastName;
       if (pi.candidateName) aiNamePatch.fullNameMarksheet = pi.candidateName;
+      const hasAiNameValues = !!(aiNamePatch.firstName || aiNamePatch.middleName || aiNamePatch.lastName || aiNamePatch.fullNameMarksheet);
 
       const existingFirstName = piForm.get('firstName')?.value;
       const existingMiddleName = piForm.get('middleName')?.value;
@@ -10666,6 +10696,10 @@ export class SharedAdmissionFormComponent implements OnInit {
       console.log('Patching Personal Info:', patchValues);
       piForm.patchValue(patchValues);
 
+      if (!existingName && hasAiNameValues) {
+        this.isNameChangeFromAi = 1;
+      }
+
       if (shouldAskNameOverwrite) {
         const confirmRef = this.dialog.open(ConfirmDialogComponent, {
           height: 'auto',
@@ -10683,7 +10717,9 @@ export class SharedAdmissionFormComponent implements OnInit {
         confirmRef.afterClosed().subscribe((result) => {
           if (result === 'ok') {
             piForm.patchValue(aiNamePatch);
-            this._snackBarMsgComponent.openSnackBar('Name updated from marksheet.', 'x', 'success-snackbar', 3000);
+            this.isNameChangeFromAi = 1;
+
+            this._snackBarMsgComponent.openSnackBar('Name updated in form. It will sync on final submit.', 'x', 'success-snackbar', 3500);
           }
         });
       }
@@ -10788,14 +10824,18 @@ export class SharedAdmissionFormComponent implements OnInit {
         academicValues.monthAppeared = resolvedMonth;
       }
       if (ai.atktCount !== undefined && ai.atktCount !== null && String(ai.atktCount).trim() !== '') {
-        academicValues.noOfATKT = Number(ai.atktCount) || 0;
-        academicValues.liveAtkt = Number(ai.atktCount) || 0;
+        const atktParsed = parseInt(String(ai.atktCount).replace(/[^0-9]/g, ''), 10);
+        const atktValue = Number.isNaN(atktParsed) ? 0 : atktParsed;
+        academicValues.noOfATKT = atktValue;
+        academicValues.liveAtkt = atktValue;
       }
       if (ai.marksObtained) academicValues.marksObtained = ai.marksObtained;
       if (ai.marksOutof) academicValues.marksOutof = ai.marksOutof;
       if (ai.percentage) academicValues.percentage = ai.percentage;
       if (ai.cgpa) academicValues.cgpa = ai.cgpa;
       if (ai.grade) academicValues.grade = ai.grade;
+      if (ai.creditPoints) academicValues.creditPoints = ai.creditPoints;
+      if (ai.creditGrade) academicValues.creditGrade = ai.creditGrade;
       if (ai.seatNo) academicValues.seatNo = ai.seatNo;
 
       console.log('Patching Academic Info:', academicValues);

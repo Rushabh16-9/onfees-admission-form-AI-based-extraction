@@ -8959,10 +8959,17 @@ export class ApplicationPreviewDialogComponent implements OnInit {
       this.allEventEmitters.showLoader.emit(true);
     }
 
+    const personalInfoValues: any = Array.isArray(this.personalInfoFormValues) ? {} : (this.personalInfoFormValues || {});
+    const isNameChangeFromAi = Number(
+      personalInfoValues.is_name_change_from_ai ?? personalInfoValues.isNameChangeFromAi ?? 0
+    ) || 0;
+    personalInfoValues['isNameChangeFromAi'] = isNameChangeFromAi;
+    personalInfoValues['is_name_change_from_ai'] = isNameChangeFromAi;
+
     let postParam: any = {
       'coursesList': this.coursesListValues,
       'categories': this.categoryFormValues,
-      'personalInfo': this.personalInfoFormValues,
+      'personalInfo': personalInfoValues,
       'addressInfo': this.addressInfoFormValues,
       'guardianInfo': this.guardianInfoFormValues,
       'educationInfo': this.educationInfoFormValues,
@@ -8981,6 +8988,8 @@ export class ApplicationPreviewDialogComponent implements OnInit {
       'finalSave': finalSave,
       'stepName': tab.stepName,
       'page': this.panelMode,
+      'isNameChangeFromAi': isNameChangeFromAi,
+      'is_name_change_from_ai': isNameChangeFromAi,
     };
 
     this._admissionService.saveForm(postParam, this.fatherPassportSizePhotoToUpload, this.motherPassportSizePhotoToUpload, this.sisterPassportSizePhotoToUpload, this.brotherPassportSizePhotoToUpload, this.guardianPassportSizePhotoToUpload, this.passportSizePhotoToUpload, this.signatureImageToUpload, this.parentSignatureImageToUpload, this.fatherSignaturePhotoToUpload, this.motherSignaturePhotoToUpload, this.sisterSignaturePhotoToUpload, this.brotherSignaturePhotoToUpload, this.guardianSignaturePhotoToUpload).subscribe(data => {
@@ -9087,10 +9096,17 @@ export class ApplicationPreviewDialogComponent implements OnInit {
       this.allEventEmitters.showLoader.emit(true);
     }
 
+    const personalInfoValues: any = Array.isArray(this.personalInfoFormValues) ? {} : (this.personalInfoFormValues || {});
+    const isNameChangeFromAi = Number(
+      personalInfoValues.is_name_change_from_ai ?? personalInfoValues.isNameChangeFromAi ?? 0
+    ) || 0;
+    personalInfoValues['isNameChangeFromAi'] = isNameChangeFromAi;
+    personalInfoValues['is_name_change_from_ai'] = isNameChangeFromAi;
+
     let postParam: any = {
       'coursesList': this.coursesListValues,
       'categories': this.categoryFormValues,
-      'personalInfo': this.personalInfoFormValues,
+      'personalInfo': personalInfoValues,
       'addressInfo': this.addressInfoFormValues,
       'guardianInfo': this.guardianInfoFormValues,
       'educationInfo': this.educationInfoFormValues,
@@ -9109,6 +9125,8 @@ export class ApplicationPreviewDialogComponent implements OnInit {
       'finalSave': finalSave,
       'stepName': tab.stepName,
       'page': this.panelMode,
+      'isNameChangeFromAi': isNameChangeFromAi,
+      'is_name_change_from_ai': isNameChangeFromAi,
       'formId': this.formDetails.formId,
       'universityApplicationFormNo': this.universityApplicationFormNo.value,
     };

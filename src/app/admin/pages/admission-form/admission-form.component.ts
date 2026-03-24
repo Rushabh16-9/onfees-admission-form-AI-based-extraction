@@ -79,11 +79,6 @@ export class AdmissionFormComponent implements OnInit {
   checkRequiredDocuments() {
     console.log('AdmissionForm: checkRequiredDocuments called');
 
-    // Check if we already showed the dialog in this session
-    // if (sessionStorage.getItem('documentUploadDialogShown')) {
-    //   return;
-    // }
-
     // Fetch required documents from JSON
     this._admissionService.getRequiredDocuments().subscribe(
       (requiredDocuments: any[]) => {
@@ -92,7 +87,6 @@ export class AdmissionFormComponent implements OnInit {
 
         if (docToUpload) {
           this.openUploadDialog(docToUpload);
-          sessionStorage.setItem('documentUploadDialogShown', 'true');
         }
       },
       (error) => {
@@ -116,7 +110,41 @@ export class AdmissionFormComponent implements OnInit {
 
     dialogRef.afterClosed().subscribe(result => {
       console.log('AdmissionForm: Dialog closed with result:', result);
-      if (result && result.success && result.file) {
+      if (result && result.success) {
+        // Dual upload flow returns already-uploaded filenames and both extracted payloads.
+        if (result.sem1Data || result.fileName) {
+          const sem1DocId = result?.sem1Data?.document_id || 390;
+          const sem2DocId = result?.sem2_document_id || result?.document_id || 389;
+
+          if (this.sharedAdmissionForm) {
+            const sem1FileName = result?.sem1Data?.fileName;
+            if (sem1FileName) {
+              this.sharedAdmissionForm.updateDocumentStatus(sem1DocId, sem1FileName);
+              this.sharedAdmissionForm.updateEduListRowUploadStatus(sem1DocId, sem1FileName);
+              this.sharedAdmissionForm.uploadedFileNames.push(sem1FileName);
+            }
+            if (result?.sem1Data?.extractedData) {
+              this.autoFillFormWithExtractedData(result.sem1Data.extractedData, sem1DocId, sem1FileName);
+            }
+
+            if (result.fileName) {
+              this.sharedAdmissionForm.updateDocumentStatus(sem2DocId, result.fileName);
+              this.sharedAdmissionForm.updateEduListRowUploadStatus(sem2DocId, result.fileName);
+              this.sharedAdmissionForm.uploadedFileNames.push(result.fileName);
+            }
+            if (result.extractedData) {
+              this.autoFillFormWithExtractedData(result.extractedData, sem2DocId, result.fileName);
+            }
+          }
+
+          this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar('Sem 1 & Sem 2 data auto-filled successfully.', 'x', 'success-snackbar', 5000);
+          return;
+        }
+
+        if (!result.file) {
+          return;
+        }
+
         console.log('Document upload verified, proceeding to upload file:', result.file?.name);
 
         const docId = this.resolveDocumentId(result, document);
