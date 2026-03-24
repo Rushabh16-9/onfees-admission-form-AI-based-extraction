@@ -9637,24 +9637,7 @@ export class SharedAdmissionFormComponent implements OnInit {
       'is_name_change_from_ai': this.isNameChangeFromAi,
     };
 
-    const _dbgCommon = globalFunctions.getCommonPostValues();
-    console.log('[SAVE_FORM] Sending payload to beta server:', JSON.stringify({
-      finalSave: postParam.finalSave,
-      stepName: postParam.stepName,
-      page: postParam.page,
-      isNameChangeFromAi: postParam.isNameChangeFromAi,
-      is_name_change_from_ai: postParam.is_name_change_from_ai,
-      personalInfo_firstName: postParam.personalInfo?.firstName,
-      educationInfo_keys: postParam.educationInfo ? Object.keys(postParam.educationInfo) : 'MISSING',
-      applicantId: _dbgCommon.applicantId,
-      userId: _dbgCommon.userId,
-      instituteId: _dbgCommon.instituteId,
-      admissionId: _dbgCommon.admissionId,
-    }));
-
     this._admissionService.saveForm(postParam, this.fatherPassportSizePhotoToUpload, this.motherPassportSizePhotoToUpload, this.sisterPassportSizePhotoToUpload, this.brotherPassportSizePhotoToUpload, this.guardianPassportSizePhotoToUpload, this.passportSizePhotoToUpload, this.signatureImageToUpload, this.parentSignatureImageToUpload, this.fatherSignaturePhotoToUpload, this.motherSignaturePhotoToUpload, this.sisterSignaturePhotoToUpload, this.brotherSignaturePhotoToUpload, this.guardianSignaturePhotoToUpload).subscribe(data => {
-
-      console.log('[SAVE_FORM] Response from beta server:', data?.status, data?.message, data);
 
       if (mode == 'finalSave') {
         this.allEventEmitters.showLoader.emit(false);
@@ -9674,18 +9657,15 @@ export class SharedAdmissionFormComponent implements OnInit {
               this.afterAdmissionFormSave(data.dataJson);
             }
           } else {
-            console.log('[SAVE_FORM] Step saved successfully (not finalSave), status=1');
             this._snackBarMsgComponent.openSnackBar('Form step saved!', 'x', 'success-snackbar', 3000);
           }
         } else if (data.status == 0) {
-          console.error('[SAVE_FORM] Backend returned error:', data.message);
           this._snackBarMsgComponent.openSnackBar(data.message, 'x', 'error-snackbar', 5000);
         }
       } else {
         this._snackBarMsgComponent.openSnackBar(allMsgs.SOMETHING_WRONG, 'x', 'error-snackbar', 5000);
       }
     }, err => {
-      console.error('[SAVE_FORM] HTTP Error:', err);
       this.allEventEmitters.showLoader.emit(false);
       this._snackBarMsgComponent.openSnackBar(allMsgs.SOMETHING_WRONG, 'x', 'error-snackbar', 5000);
     });
@@ -9788,17 +9768,6 @@ export class SharedAdmissionFormComponent implements OnInit {
       'formId': this.formDetails.formId,
       'universityApplicationFormNo': this.universityApplicationFormNo.value,
     };
-
-    console.log('[SAVE_INSTITUTE_FORM] Sending payload:', {
-      finalSave: postParam.finalSave,
-      stepName: postParam.stepName,
-      page: postParam.page,
-      isNameChangeFromAi: postParam.isNameChangeFromAi,
-      is_name_change_from_ai: postParam.is_name_change_from_ai,
-      personalInfoFlagCamel: postParam.personalInfo?.isNameChangeFromAi,
-      personalInfoFlagSnake: postParam.personalInfo?.is_name_change_from_ai,
-      formId: postParam.formId,
-    });
 
     this._institutesService.saveAdmissionForm(postParam, this.passportSizePhotoToUpload, this.signatureImageToUpload, this.parentSignatureImageToUpload).subscribe(data => {
 

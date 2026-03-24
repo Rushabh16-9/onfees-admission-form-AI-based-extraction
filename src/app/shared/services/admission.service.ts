@@ -19,8 +19,6 @@ export class AdmissionService {
     let commonPostValues = globalFunctions.getCommonPostValues();
 
     let postData = commonPostValues;
-
-    console.log('[DEBUG_SAVE_FORM] URL:', url, 'payload:', postData);
     return this.http.post<any>(url, postData);
   }
 

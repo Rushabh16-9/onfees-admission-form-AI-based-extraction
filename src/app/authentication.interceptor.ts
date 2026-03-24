@@ -70,16 +70,6 @@ export class AuthenticationInterceptor implements HttpInterceptor {
 
         req = req.clone({ body: mergedBody });
       }
-
-      req = req.clone({ headers: req.headers.set('X-Name-Change-From-AI', String(isNameChangeFromAi)) });
-      (window as any).__lastSaveRequestDebug = {
-        time: new Date().toISOString(),
-        url: req.url,
-        method: req.method,
-        is_name_change_from_ai: isNameChangeFromAi,
-        body: req.body
-      };
-      console.log('[SAVE_REQUEST_TRACE]', (window as any).__lastSaveRequestDebug);
     }
 
     return next.handle(req).pipe(map((event: HttpEvent<any>) => {
