@@ -73,7 +73,7 @@ export class SharedAdmissionFormComponent implements OnInit {
   @Input('formDetails') formDetails;
   @Input('sharedDialogRef') sharedDialogRef;
 
-  @Output() triggerUploadPopup = new EventEmitter<void>();
+  @Output() triggerUploadPopup = new EventEmitter<any>();
 
   allMsgs: any = allMsgs;
   globalFunctions: any = globalFunctions;
@@ -641,12 +641,6 @@ export class SharedAdmissionFormComponent implements OnInit {
 
   setFormValues(formData) {
 
-    // Always trigger required-doc upload popup for admission flow.
-    // It is guarded to show once per session in AdmissionFormComponent.
-    if (this.panelMode === 'admission') {
-      this.triggerUploadPopup.emit();
-    }
-
     if (formData.formFillingInstructions.display) {
       // Delay instructions popup so upload popup opens first.
       setTimeout(() => {
@@ -685,6 +679,11 @@ export class SharedAdmissionFormComponent implements OnInit {
     this.filteredBoardList = formData.educationInfo.boardList;
 
     this.formData = formData;
+
+    // Emit after formData is assigned so the parent can read aiDocumentVerification.
+    if (this.panelMode === 'admission') {
+      this.triggerUploadPopup.emit(formData);
+    }
     this.isNameChangeFromAi = Number(
       formData?.personalInfo?.isNameChangeFromAi ?? formData?.personalInfo?.is_name_change_from_ai ?? 0
     ) || 0;

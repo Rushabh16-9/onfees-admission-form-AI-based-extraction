@@ -76,14 +76,14 @@ export class AdmissionFormComponent implements OnInit {
     // this.checkRequiredDocuments();
   }
 
-  checkRequiredDocuments() {
-    // Read aiDocumentVerification from backend API (via formData) instead of local JSON file
-    const formData = this.sharedAdmissionForm?.formData;
+  checkRequiredDocuments(formData?: any) {
+    // Use formData passed from event (already assigned) to avoid timing issues
+    const fd = formData || this.sharedAdmissionForm?.formData;
     let aiDocList: any[] = [];
 
-    const rawAiFlag = formData?.personalInfo?.aiDocumentVerification
-      ?? formData?.aiDocumentVerification
-      ?? formData?.personal_info_config?.aiDocumentVerification;
+    const rawAiFlag = fd?.personalInfo?.aiDocumentVerification
+      ?? fd?.aiDocumentVerification
+      ?? fd?.personal_info_config?.aiDocumentVerification;
 
     if (Array.isArray(rawAiFlag)) {
       aiDocList = rawAiFlag.filter((d: any) => d.show === true);
