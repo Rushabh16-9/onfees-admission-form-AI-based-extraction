@@ -508,6 +508,6 @@ export class AdmissionService {
   }
 
   getRequiredDocuments(): Observable<any> {
-    return this.http.get<any>('assets/data/required-documents.json');
+    return this.http.get<any>('assets/data/required-documents.json?t=' + new Date().getTime());
   }
 }

@@ -7966,18 +7966,30 @@ export class SharedAdmissionFormComponent implements OnInit {
 
         let aiDocumentVerificationEnabled = false;
         try {
-            if (this.formData?.personalInfo?.aiDocumentVerification) {
-                aiDocumentVerificationEnabled = this.formData.personalInfo.aiDocumentVerification;
-            } else if (this.formData?.aiDocumentVerification) {
-                aiDocumentVerificationEnabled = this.formData.aiDocumentVerification;
-            } else if (this.formData?.personal_info_config?.aiDocumentVerification) {
-                aiDocumentVerificationEnabled = this.formData.personal_info_config.aiDocumentVerification;
+            // Resolve the raw value from formData (supports multiple nesting paths)
+            let rawAiFlag: any = undefined;
+            if (this.formData?.personalInfo?.aiDocumentVerification !== undefined) {
+                rawAiFlag = this.formData.personalInfo.aiDocumentVerification;
+            } else if (this.formData?.aiDocumentVerification !== undefined) {
+                rawAiFlag = this.formData.aiDocumentVerification;
+            } else if (this.formData?.personal_info_config?.aiDocumentVerification !== undefined) {
+                rawAiFlag = this.formData.personal_info_config.aiDocumentVerification;
             } else if (typeof this.formData?.personal_info_config === 'string') {
                 const pic = JSON.parse(this.formData.personal_info_config);
-                aiDocumentVerificationEnabled = pic?.aiDocumentVerification;
+                rawAiFlag = pic?.aiDocumentVerification;
             } else if (typeof this.formData?.personalInfo?.personal_info_config === 'string') {
                 const pic = JSON.parse(this.formData.personalInfo.personal_info_config);
-                aiDocumentVerificationEnabled = pic?.aiDocumentVerification;
+                rawAiFlag = pic?.aiDocumentVerification;
+            }
+
+            if (Array.isArray(rawAiFlag)) {
+                // Array format: [{document_id: 183, document_name: '12th Marksheet', show: true}]
+                const currentDocId = documents['controls'].docId.value;
+                const matchingDoc = rawAiFlag.find((d: any) => String(d.document_id) === String(currentDocId) && d.show === true);
+                aiDocumentVerificationEnabled = !!matchingDoc;
+            } else {
+                // Boolean format: true / false
+                aiDocumentVerificationEnabled = !!rawAiFlag;
             }
         } catch (e) {}
 

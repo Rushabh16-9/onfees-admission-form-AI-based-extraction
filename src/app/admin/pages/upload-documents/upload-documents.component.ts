@@ -52,7 +52,7 @@ export class UploadDocumentsComponent implements OnInit {
   documentsUpload: any = true;
   courseSelection: any = true;
   optPayment: boolean = true;
-  aiDocumentVerificationEnabled: boolean = false;
+  aiDocumentVerificationEnabled: any = false;
 
   constructor(
     public dialog: MatDialog,
@@ -103,7 +103,7 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
-          this.aiDocumentVerificationEnabled = !!(data?.aiDocumentVerification || data?.dataJson?.aiDocumentVerification || data?.personalInfo?.aiDocumentVerification);
+          this.aiDocumentVerificationEnabled = data?.aiDocumentVerification ?? data?.dataJson?.aiDocumentVerification ?? data?.personalInfo?.aiDocumentVerification ?? false;
           this.setDocumentsValues(data.dataJson);
         } else if (data.status == 102) {
           this.router.navigate(['/cart']);
@@ -129,7 +129,7 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
-          this.aiDocumentVerificationEnabled = !!(data?.aiDocumentVerification || data?.dataJson?.aiDocumentVerification || data?.personalInfo?.aiDocumentVerification);
+          this.aiDocumentVerificationEnabled = data?.aiDocumentVerification ?? data?.dataJson?.aiDocumentVerification ?? data?.personalInfo?.aiDocumentVerification ?? false;
           this.setDocumentsValues(data.dataJson);
         } else if (data.status == 102) {
           this.router.navigate(['/cart']);
@@ -274,32 +274,51 @@ export class UploadDocumentsComponent implements OnInit {
           /\b(marksheet|mark\s*sheet|ssc|hsc|semester|sem|diploma|degree|10th|12th)\b/.test(normalizedDocTitle);
 
         if (isMarksheetDoc && this.aiDocumentVerificationEnabled) {
-          const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
-            width: '600px',
-            disableClose: true,
-            data: {
-              document_name: docTitle,
-              document_id: docId,
-              file: file
-            }
-          });
+          // Check per-document when aiDocumentVerification is an array
+          let docAiEnabled = false;
+          const currentDocId = this.allDocuments[docIndex]?.controls?.docId?.value;
+          if (Array.isArray(this.aiDocumentVerificationEnabled)) {
+            const match = this.aiDocumentVerificationEnabled.find((d: any) => String(d.document_id) === String(currentDocId) && d.show === true);
+            docAiEnabled = !!match;
+          } else {
+            docAiEnabled = !!this.aiDocumentVerificationEnabled;
+          }
 
-          dialogRef.afterClosed().subscribe(result => {
-            if (result && result.success) {
-              const verifiedFile = result.file || file;
-              const resolvedExt = (verifiedFile?.name || '').toUpperCase().split('.').pop() || ext;
-              
-              if (resolvedExt.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
-                this.browsedDocData(verifiedFile, docIndex, bunchIndex, resolvedExt);
-              } else {
-                this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
+          if (docAiEnabled) {
+            const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
+              width: '600px',
+              disableClose: true,
+              data: {
+                document_name: docTitle,
+                document_id: docId,
+                file: file
               }
+            });
+
+            dialogRef.afterClosed().subscribe(result => {
+              if (result && result.success) {
+                const verifiedFile = result.file || file;
+                const resolvedExt = (verifiedFile?.name || '').toUpperCase().split('.').pop() || ext;
+
+                if (resolvedExt.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
+                  this.browsedDocData(verifiedFile, docIndex, bunchIndex, resolvedExt);
+                } else {
+                  this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
+                }
+              } else {
+                // Rejected or cancelled — reset the file input
+                documents['controls'].isBrowsed.setValue(false);
+                event.target.value = '';
+              }
+            });
+          } else {
+            // Normal flow without AI dialog
+            if (ext.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
+              this.browsedDocData(file, docIndex, bunchIndex, ext.toUpperCase() === 'PDF' ? 'PDF' : ext);
             } else {
-              // Rejected or cancelled — reset the file input
-              documents['controls'].isBrowsed.setValue(false);
-              event.target.value = '';
+              this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
             }
-          });
+          }
         } else {
           // Normal flow without AI dialog
           if (ext.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
