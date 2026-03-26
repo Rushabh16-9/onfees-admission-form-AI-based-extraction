@@ -19,6 +19,32 @@ export class DocumentUploadDialogComponent implements OnInit {
     private readonly maxFileSizeMbMarksheet: number = 20;
     private readonly maxFileSizeMbVerificationOnly: number = 2;
 
+    private getBriefInvalidReason(rawReason: any): string {
+        const text = (rawReason || '').toString().replace(/\s+/g, ' ').trim();
+        if (!text) {
+            return 'Uploaded file does not match the selected document type.';
+        }
+
+        return text
+            .replace(/^invalid document\s*:?\s*/i, '')
+            .replace(/^error\s*:?\s*/i, '')
+            .trim();
+    }
+
+    private getUploadGuidance(expectedDoc: string, isMarksheetFlow: boolean): string {
+        if (isMarksheetFlow) {
+            return `Please upload a clear, single-page ${expectedDoc} image or PDF.`;
+        }
+
+        return `Please upload a clear image/PDF of ${expectedDoc}.`;
+    }
+
+    private buildInvalidDocumentMessage(reason: any, expectedDoc: string, isMarksheetFlow: boolean): string {
+        const briefReason = this.getBriefInvalidReason(reason);
+        const guidance = this.getUploadGuidance(expectedDoc, isMarksheetFlow);
+        return `Reason: ${briefReason}. ${guidance}`;
+    }
+
     // --- Sem 1 State ---
     sem1File: File | null = null;
     sem1ImagePreviewUrl: string | null = null;
@@ -168,6 +194,7 @@ export class DocumentUploadDialogComponent implements OnInit {
                     const verification = response?.verification;
                     const isValid = !!(response?.success && verification?.isValid);
                     const reason = verification?.reason || response?.error || '';
+                    const detailedReason = this.buildInvalidDocumentMessage(reason, docName, false);
 
                     if (docIndex === 1) {
                         this.sem1IsExtracting = false;
@@ -178,8 +205,8 @@ export class DocumentUploadDialogComponent implements OnInit {
                             this.sem1ExtractedData = null;
                         } else {
                             this.sem1VerificationFailed = true;
-                            this.sem1VerificationMessage = '✗ Verification failed';
-                            this.sem1ExtractionError = reason || 'Uploaded file is not a valid document.';
+                            this.sem1VerificationMessage = `✗ Invalid ${docName}`;
+                            this.sem1ExtractionError = detailedReason;
                         }
                     } else {
                         this.sem2IsExtracting = false;
@@ -190,24 +217,25 @@ export class DocumentUploadDialogComponent implements OnInit {
                             this.sem2ExtractedData = null;
                         } else {
                             this.sem2VerificationFailed = true;
-                            this.sem2VerificationMessage = '✗ Verification failed';
-                            this.sem2ExtractionError = reason || 'Uploaded file is not a valid document.';
+                            this.sem2VerificationMessage = `✗ Invalid ${docName}`;
+                            this.sem2ExtractionError = detailedReason;
                         }
                     }
                 },
                 error: (error) => {
+                    const detailedReason = this.buildInvalidDocumentMessage(error?.message || 'Failed to verify document.', docName, false);
                     if (docIndex === 1) {
                         this.sem1IsExtracting = false;
                         this.sem1IsVerifying = false;
                         this.sem1VerificationFailed = true;
-                        this.sem1VerificationMessage = '✗ Verification failed';
-                        this.sem1ExtractionError = error?.message || 'Failed to verify document.';
+                        this.sem1VerificationMessage = `✗ Invalid ${docName}`;
+                        this.sem1ExtractionError = detailedReason;
                     } else {
                         this.sem2IsExtracting = false;
                         this.sem2IsVerifying = false;
                         this.sem2VerificationFailed = true;
-                        this.sem2VerificationMessage = '✗ Verification failed';
-                        this.sem2ExtractionError = error?.message || 'Failed to verify document.';
+                        this.sem2VerificationMessage = `✗ Invalid ${docName}`;
+                        this.sem2ExtractionError = detailedReason;
                     }
                 }
             });
@@ -223,9 +251,10 @@ export class DocumentUploadDialogComponent implements OnInit {
                         this.sem1VerificationMessage = `✓ Verified as ${docName}`;
                         this.sem1ExtractedData = response.data;
                     } else {
+                        const detailedReason = this.buildInvalidDocumentMessage(response.error || 'Failed to extract data.', docName, true);
                         this.sem1VerificationFailed = true;
-                        this.sem1VerificationMessage = '✗ Verification failed';
-                        this.sem1ExtractionError = response.error || 'Failed to extract data.';
+                        this.sem1VerificationMessage = `✗ Invalid ${docName}`;
+                        this.sem1ExtractionError = detailedReason;
                     }
                 } else {
                     this.sem2IsExtracting = false;
@@ -234,25 +263,27 @@ export class DocumentUploadDialogComponent implements OnInit {
                         this.sem2VerificationMessage = `✓ Verified as ${docName}`;
                         this.sem2ExtractedData = response.data;
                     } else {
+                        const detailedReason = this.buildInvalidDocumentMessage(response.error || 'Failed to extract data.', docName, true);
                         this.sem2VerificationFailed = true;
-                        this.sem2VerificationMessage = '✗ Verification failed';
-                        this.sem2ExtractionError = response.error || 'Failed to extract data.';
+                        this.sem2VerificationMessage = `✗ Invalid ${docName}`;
+                        this.sem2ExtractionError = detailedReason;
                     }
                 }
             },
             error: (error) => {
+                const detailedReason = this.buildInvalidDocumentMessage(error?.message || 'Failed to extract data.', docName, true);
                 if (docIndex === 1) {
                     this.sem1IsExtracting = false;
                     this.sem1IsVerifying = false;
                     this.sem1VerificationFailed = true;
-                    this.sem1VerificationMessage = '✗ Invalid Document';
-                    this.sem1ExtractionError = error.message;
+                    this.sem1VerificationMessage = `✗ Invalid ${docName}`;
+                    this.sem1ExtractionError = detailedReason;
                 } else {
                     this.sem2IsExtracting = false;
                     this.sem2IsVerifying = false;
                     this.sem2VerificationFailed = true;
-                    this.sem2VerificationMessage = '✗ Invalid Document';
-                    this.sem2ExtractionError = error.message;
+                    this.sem2VerificationMessage = `✗ Invalid ${docName}`;
+                    this.sem2ExtractionError = detailedReason;
                 }
             }
         });

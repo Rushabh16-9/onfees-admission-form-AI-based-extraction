@@ -772,6 +772,9 @@ export class SharedAdmissionFormComponent implements OnInit {
       firstName: [null],
       middleName: [null],
       lastName: [null],
+      oldName: [null],
+      oldFullName: [null],
+      aiBasedNameChange: [null],
       fatherName: [null],
       motherName: [null],
       dob: [null],
@@ -2501,14 +2504,17 @@ export class SharedAdmissionFormComponent implements OnInit {
       this.personalInfoForm = this._formBuilder.group({
         grNo: [formData.personalInfo.grNo, Validators.compose([grNoReq, Validators.minLength(formData.personalInfo.grNoMinLength)])],
         instituteStudentId: [formData.personalInfo.instituteStudentId, instituteStudentIdReq],
-        fullNameMarksheet: new UntypedFormControl({ value: formData.personalInfo.fullNameMarksheet, disabled: !formData.personalInfo.isFullNameMarksheetEditable }, Validators.compose([fullNameMarksheetReq])),
+        fullNameMarksheet: new UntypedFormControl({ value: formData.personalInfo.fullNameMarksheet, disabled: false }, Validators.compose([fullNameMarksheetReq])),
         MaindenName: new UntypedFormControl({ value: formData.personalInfo.MaindenName, disabled: !formData.personalInfo.isMaindenNameEditable }, Validators.compose([MaindenNameReq])),
         changeInName: [changeInName],
         nameChange: [formData.personalInfo.nameChange],
         abcId: [formData.personalInfo.abcId, abcIdReq],
-        firstName: new UntypedFormControl({ value: formData.personalInfo.firstName, disabled: !formData.personalInfo.isFirstNameEditable }, Validators.compose([firstNameReq])),
-        middleName: new UntypedFormControl({ value: formData.personalInfo.middleName, disabled: !formData.personalInfo.isMiddleNameEditable }, Validators.compose([middleNameReq])),
-        lastName: new UntypedFormControl({ value: formData.personalInfo.lastName, disabled: !formData.personalInfo.isLastNameEditable }, Validators.compose([lastNameReq])),
+        firstName: new UntypedFormControl({ value: formData.personalInfo.firstName, disabled: false }, Validators.compose([firstNameReq])),
+        middleName: new UntypedFormControl({ value: formData.personalInfo.middleName, disabled: false }, Validators.compose([middleNameReq])),
+        lastName: new UntypedFormControl({ value: formData.personalInfo.lastName, disabled: false }, Validators.compose([lastNameReq])),
+        oldName: [formData.personalInfo.oldName],
+        oldFullName: [formData.personalInfo.oldFullName],
+        aiBasedNameChange: [formData.personalInfo.aiBasedNameChange],
         fatherName: new UntypedFormControl({ value: formData.personalInfo.fatherName, disabled: !formData.personalInfo.isFatherNameEditable }, Validators.compose([fatherNameReq])),
         motherName: new UntypedFormControl({ value: formData.personalInfo.motherName, disabled: !formData.personalInfo.isMotherNameEditable }, Validators.compose([motherNameReq])),
         bloodGroup: [formData.personalInfo.bloodGroup.value, bloodGroupReq],
@@ -7958,7 +7964,24 @@ export class SharedAdmissionFormComponent implements OnInit {
         const isMarksheetDoc = !isVerificationOnlyDoc &&
           /\b(marksheet|mark\s*sheet|ssc|hsc|semester|sem|diploma|degree|10th|12th)\b/.test(normalizedDocTitle);
 
-        if (isMarksheetDoc) {
+        let aiDocumentVerificationEnabled = false;
+        try {
+            if (this.formData?.personalInfo?.aiDocumentVerification) {
+                aiDocumentVerificationEnabled = this.formData.personalInfo.aiDocumentVerification;
+            } else if (this.formData?.aiDocumentVerification) {
+                aiDocumentVerificationEnabled = this.formData.aiDocumentVerification;
+            } else if (this.formData?.personal_info_config?.aiDocumentVerification) {
+                aiDocumentVerificationEnabled = this.formData.personal_info_config.aiDocumentVerification;
+            } else if (typeof this.formData?.personal_info_config === 'string') {
+                const pic = JSON.parse(this.formData.personal_info_config);
+                aiDocumentVerificationEnabled = pic?.aiDocumentVerification;
+            } else if (typeof this.formData?.personalInfo?.personal_info_config === 'string') {
+                const pic = JSON.parse(this.formData.personalInfo.personal_info_config);
+                aiDocumentVerificationEnabled = pic?.aiDocumentVerification;
+            }
+        } catch (e) {}
+
+        if (isMarksheetDoc && aiDocumentVerificationEnabled) {
         // Open Document Upload Dialog for AI Verification and Extraction (for both PDF and images)
         const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
           width: '800px',
@@ -10686,9 +10709,15 @@ export class SharedAdmissionFormComponent implements OnInit {
         confirmRef.afterClosed().subscribe((result) => {
           if (result === 'ok') {
             piForm.patchValue(aiNamePatch);
+            piForm.patchValue({
+              isNameChangeFromAi: 1,
+              is_name_change_from_ai: 1,
+              oldName: existingName,
+              oldFullName: existingName,
+              aiBasedNameChange: aiDetectedName
+            });
             this.isNameChangeFromAi = 1;
-
-            this._snackBarMsgComponent.openSnackBar('Name updated in form. It will sync on final submit.', 'x', 'success-snackbar', 3500);
+            this._snackBarMsgComponent.openSnackBar('Name updated in form. It will apply in verify flow.', 'x', 'success-snackbar', 3500);
           }
         });
       }

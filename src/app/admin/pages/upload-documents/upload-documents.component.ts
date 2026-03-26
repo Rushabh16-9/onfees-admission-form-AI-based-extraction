@@ -52,6 +52,7 @@ export class UploadDocumentsComponent implements OnInit {
   documentsUpload: any = true;
   courseSelection: any = true;
   optPayment: boolean = true;
+  aiDocumentVerificationEnabled: boolean = false;
 
   constructor(
     public dialog: MatDialog,
@@ -102,6 +103,7 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
+          this.aiDocumentVerificationEnabled = !!(data?.aiDocumentVerification || data?.dataJson?.aiDocumentVerification || data?.personalInfo?.aiDocumentVerification);
           this.setDocumentsValues(data.dataJson);
         } else if (data.status == 102) {
           this.router.navigate(['/cart']);
@@ -127,6 +129,7 @@ export class UploadDocumentsComponent implements OnInit {
 
       if (data.status != undefined) {
         if (data.status == 1) {
+          this.aiDocumentVerificationEnabled = !!(data?.aiDocumentVerification || data?.dataJson?.aiDocumentVerification || data?.personalInfo?.aiDocumentVerification);
           this.setDocumentsValues(data.dataJson);
         } else if (data.status == 102) {
           this.router.navigate(['/cart']);
@@ -263,38 +266,48 @@ export class UploadDocumentsComponent implements OnInit {
 
       } else {
 
-        // Open Gemini AI Verification Dialog for ALL file types (PDF and images)
         const docTitle = this.allDocuments[docIndex]?.controls?.docTitle?.value || '';
         const docId = this.allDocuments[docIndex]?.controls?.docId?.value;
+        const normalizedDocTitle = (docTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(normalizedDocTitle);
+        const isMarksheetDoc = !isVerificationOnlyDoc &&
+          /\b(marksheet|mark\s*sheet|ssc|hsc|semester|sem|diploma|degree|10th|12th)\b/.test(normalizedDocTitle);
 
-        const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
-          width: '600px',
-          disableClose: true,
-          data: {
-            document_name: docTitle,
-            document_id: docId,
-            file: file
-          }
-        });
-
-        dialogRef.afterClosed().subscribe(result => {
-          if (result && result.success) {
-            const verifiedFile = result.file || file;
-            const resolvedExt = (verifiedFile?.name || '').toUpperCase().split('.').pop() || ext;
-            const normalizedDocTitle = (docTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
-            const isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(normalizedDocTitle);
-
-            if (resolvedExt.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
-              this.browsedDocData(verifiedFile, docIndex, bunchIndex, resolvedExt);
-            } else {
-              this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
+        if (isMarksheetDoc && this.aiDocumentVerificationEnabled) {
+          const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
+            width: '600px',
+            disableClose: true,
+            data: {
+              document_name: docTitle,
+              document_id: docId,
+              file: file
             }
+          });
+
+          dialogRef.afterClosed().subscribe(result => {
+            if (result && result.success) {
+              const verifiedFile = result.file || file;
+              const resolvedExt = (verifiedFile?.name || '').toUpperCase().split('.').pop() || ext;
+              
+              if (resolvedExt.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
+                this.browsedDocData(verifiedFile, docIndex, bunchIndex, resolvedExt);
+              } else {
+                this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
+              }
+            } else {
+              // Rejected or cancelled — reset the file input
+              documents['controls'].isBrowsed.setValue(false);
+              event.target.value = '';
+            }
+          });
+        } else {
+          // Normal flow without AI dialog
+          if (ext.toUpperCase() === 'PDF' || isVerificationOnlyDoc) {
+            this.browsedDocData(file, docIndex, bunchIndex, ext.toUpperCase() === 'PDF' ? 'PDF' : ext);
           } else {
-            // Rejected or cancelled — reset the file input
-            documents['controls'].isBrowsed.setValue(false);
-            event.target.value = '';
+            this.openImageCropperDialog(event, 'documents', docIndex, bunchIndex);
           }
-        });
+        }
       }
     }
   }
