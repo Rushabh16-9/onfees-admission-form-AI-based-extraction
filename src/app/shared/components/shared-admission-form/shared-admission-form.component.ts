@@ -7982,16 +7982,23 @@ export class SharedAdmissionFormComponent implements OnInit {
                 rawAiFlag = pic?.aiDocumentVerification;
             }
 
+            console.log('[AI DEBUG] formData:', this.formData);
+            console.log('[AI DEBUG] rawAiFlag:', rawAiFlag);
+
             if (Array.isArray(rawAiFlag)) {
                 // Array format: [{document_id: 183, document_name: '12th Marksheet', show: true}]
                 const currentDocId = documents['controls'].docId.value;
+                console.log('[AI DEBUG] currentDocId:', currentDocId, 'type:', typeof currentDocId);
                 const matchingDoc = rawAiFlag.find((d: any) => String(d.document_id) === String(currentDocId) && d.show === true);
+                console.log('[AI DEBUG] matchingDoc:', matchingDoc);
                 aiDocumentVerificationEnabled = !!matchingDoc;
             } else {
                 // Boolean format: true / false
                 aiDocumentVerificationEnabled = !!rawAiFlag;
             }
-        } catch (e) {}
+        } catch (e) { console.error('[AI DEBUG] Error:', e); }
+
+        console.log('[AI DEBUG] isMarksheetDoc:', isMarksheetDoc, '| aiEnabled:', aiDocumentVerificationEnabled);
 
         if (isMarksheetDoc && aiDocumentVerificationEnabled) {
         // Open Document Upload Dialog for AI Verification and Extraction (for both PDF and images)

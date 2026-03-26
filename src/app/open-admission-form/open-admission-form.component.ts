@@ -65,17 +65,33 @@ export class OpenAdmissionFormComponent implements OnInit {
   }
 
   checkRequiredDocuments() {
-    this._admissionService.getRequiredDocuments().subscribe(
-      (requiredDocuments: any[]) => {
-        const docToUpload = requiredDocuments.find(doc => doc.show);
-        if (docToUpload) {
-          this.openUploadDialog(docToUpload);
-        }
-      },
-      (error) => {
-        console.error('OpenAdmissionForm: Failed to fetch required documents:', error);
-      }
-    );
+    // Read aiDocumentVerification from backend API (via formData) instead of local JSON file
+    const formData = this.sharedAdmissionForm?.formData;
+    let aiDocList: any[] = [];
+
+    const rawAiFlag = formData?.personalInfo?.aiDocumentVerification
+      ?? formData?.aiDocumentVerification
+      ?? formData?.personal_info_config?.aiDocumentVerification;
+
+    if (Array.isArray(rawAiFlag)) {
+      aiDocList = rawAiFlag.filter((d: any) => d.show === true);
+    } else if (rawAiFlag === true) {
+      // broad boolean enable — fallback to read from JSON file
+      this._admissionService.getRequiredDocuments().subscribe(
+        (requiredDocuments: any[]) => {
+          const docToUpload = requiredDocuments.find(doc => doc.show);
+          if (docToUpload) {
+            this.openUploadDialog(docToUpload);
+          }
+        },
+        (error) => { console.error('OpenAdmissionForm: Failed to fetch required documents:', error); }
+      );
+      return;
+    }
+
+    if (aiDocList.length > 0) {
+      this.openUploadDialog(aiDocList[0]);
+    }
   }
 
   openUploadDialog(document: any) {

@@ -77,23 +77,33 @@ export class AdmissionFormComponent implements OnInit {
   }
 
   checkRequiredDocuments() {
-    console.log('AdmissionForm: checkRequiredDocuments called');
+    // Read aiDocumentVerification from backend API (via formData) instead of local JSON file
+    const formData = this.sharedAdmissionForm?.formData;
+    let aiDocList: any[] = [];
 
-    // Fetch required documents from JSON
-    this._admissionService.getRequiredDocuments().subscribe(
-      (requiredDocuments: any[]) => {
-        console.log('Fetched required documents:', requiredDocuments);
-        const docToUpload = requiredDocuments.find(doc => doc.show);
+    const rawAiFlag = formData?.personalInfo?.aiDocumentVerification
+      ?? formData?.aiDocumentVerification
+      ?? formData?.personal_info_config?.aiDocumentVerification;
 
-        if (docToUpload) {
-          this.openUploadDialog(docToUpload);
-        }
-      },
-      (error) => {
-        console.error('Failed to fetch required documents:', error);
-        // Fallback or handle error - for now, maybe just do nothing or show error
-      }
-    );
+    if (Array.isArray(rawAiFlag)) {
+      aiDocList = rawAiFlag.filter((d: any) => d.show === true);
+    } else if (rawAiFlag === true) {
+      // broad boolean enable — fallback to read from JSON file
+      this._admissionService.getRequiredDocuments().subscribe(
+        (requiredDocuments: any[]) => {
+          const docToUpload = requiredDocuments.find(doc => doc.show);
+          if (docToUpload) {
+            this.openUploadDialog(docToUpload);
+          }
+        },
+        (error) => { console.error('AdmissionForm: Failed to fetch required documents:', error); }
+      );
+      return;
+    }
+
+    if (aiDocList.length > 0) {
+      this.openUploadDialog(aiDocList[0]);
+    }
   }
 
   openUploadDialog(document: any) {
