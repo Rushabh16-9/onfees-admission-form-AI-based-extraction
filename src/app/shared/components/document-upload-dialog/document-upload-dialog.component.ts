@@ -1,9 +1,22 @@
 import { Component, Inject, OnInit } from '@angular/core';
 import { MatLegacyDialogRef as MatDialogRef, MAT_LEGACY_DIALOG_DATA as MAT_DIALOG_DATA } from '@angular/material/legacy-dialog';
-import * as globalFunctions from 'app/global/globalFunctions';
 import { DocumentExtractionService } from 'app/shared/services/document-extraction.service';
 import { ExtractedMarksheetData } from 'app/shared/models/document-extraction.model';
 import { forkJoin } from 'rxjs';
+
+export interface UploadDocumentState {
+    document_id: number;
+    document_name: string;
+    file: File | null;
+    imagePreviewUrl: string | null;
+    isExtracting: boolean;
+    isVerifying: boolean;
+    extractedData: ExtractedMarksheetData | null;
+    verificationFailed: boolean;
+    verificationMessage: string;
+    extractionError: string;
+    isVerificationOnlyDoc: boolean;
+}
 
 @Component({
     selector: 'app-document-upload-dialog',
@@ -12,339 +25,258 @@ import { forkJoin } from 'rxjs';
 })
 export class DocumentUploadDialogComponent implements OnInit {
 
-    isDualUpload: boolean = false;
-    isVerificationOnlyDoc: boolean = false;
+    documentsState: UploadDocumentState[] = [];
     isSubmitting: boolean = false;
     submitError: string = '';
+    
     private readonly maxFileSizeMbMarksheet: number = 20;
     private readonly maxFileSizeMbVerificationOnly: number = 2;
 
-    private getBriefInvalidReason(rawReason: any): string {
-        const text = (rawReason || '').toString().replace(/\s+/g, ' ').trim();
-        if (!text) {
-            return 'Uploaded file does not match the selected document type.';
+    constructor(
+        public dialogRef: MatDialogRef<DocumentUploadDialogComponent>,
+        @Inject(MAT_DIALOG_DATA) public data: any,
+        private extractionService: DocumentExtractionService
+    ) {
+        this.dialogRef.disableClose = true;
+    }
+
+    ngOnInit(): void {
+        let docs: any[] = [];
+        if (this.data && Array.isArray(this.data.documents)) {
+            docs = this.data.documents;
+        } else if (this.data) {
+            docs = [this.data];
         }
 
-        return text
-            .replace(/^invalid document\s*:?\s*/i, '')
-            .replace(/^error\s*:?\s*/i, '')
-            .trim();
+        // Expand "Sem 1" into dual upload for backward compatibility if it's the only one and matches Sem 1
+        if (docs.length === 1) {
+            const docNameLower = (docs[0].document_name || '').toLowerCase();
+            const isSem1Title = /(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(docNameLower) && /mark\s*sheet|marksheet/.test(docNameLower);
+            if (docs[0].document_id === 390 || isSem1Title) {
+                docs = [
+                    { document_id: 390, document_name: 'Sem 1 Marksheet' },
+                    { document_id: 389, document_name: 'Sem 2 Marksheet' }
+                ];
+            }
+        }
+
+        this.documentsState = docs.map(doc => {
+            const docNameLower = (doc.document_name || '').toLowerCase();
+            const isMarksheet = /\b(marksheet|mark\s*sheet|ssc|hsc|semester|sem|diploma|degree|10th|12th)\b/.test(docNameLower);
+            const isVerifOnly = !isMarksheet;
+            
+            return {
+                document_id: doc.document_id || doc.id,
+                document_name: doc.document_name || 'Document',
+                file: doc.file || null,
+                imagePreviewUrl: null,
+                isExtracting: false,
+                isVerifying: false,
+                extractedData: null,
+                verificationFailed: false,
+                verificationMessage: '',
+                extractionError: '',
+                isVerificationOnlyDoc: isVerifOnly
+            };
+        });
+
+        // Handle pre-filled file for the first document if passed via legacy single doc data
+        if (this.data && this.data.file && this.documentsState.length > 0) {
+            this.handleFileForIndex(this.data.file, 0);
+        }
+    }
+
+    private getBriefInvalidReason(rawReason: any): string {
+        const text = (rawReason || '').toString().replace(/\s+/g, ' ').trim();
+        if (!text) return 'Uploaded file does not match the selected document type.';
+        return text.replace(/^invalid document\s*:?\s*/i, '').replace(/^error\s*:?\s*/i, '').trim();
     }
 
     private getUploadGuidance(expectedDoc: string, isMarksheetFlow: boolean): string {
-        if (isMarksheetFlow) {
-            return `Please upload a clear, single-page ${expectedDoc} image or PDF.`;
-        }
-
+        if (isMarksheetFlow) return `Please upload a clear, single-page ${expectedDoc} image or PDF.`;
         return `Please upload a clear image/PDF of ${expectedDoc}.`;
     }
 
     private buildInvalidDocumentMessage(reason: any, expectedDoc: string, isMarksheetFlow: boolean): string {
-        const briefReason = this.getBriefInvalidReason(reason);
-        const guidance = this.getUploadGuidance(expectedDoc, isMarksheetFlow);
-        return `Reason: ${briefReason}. ${guidance}`;
+        return `Reason: ${this.getBriefInvalidReason(reason)}. ${this.getUploadGuidance(expectedDoc, isMarksheetFlow)}`;
     }
 
-    // --- Sem 1 State ---
-    sem1File: File | null = null;
-    sem1ImagePreviewUrl: string | null = null;
-    sem1IsExtracting: boolean = false;
-    sem1IsVerifying: boolean = false;
-    sem1ExtractedData: ExtractedMarksheetData | null = null;
-    sem1VerificationFailed: boolean = false;
-    sem1VerificationMessage: string = '';
-    sem1ExtractionError: string = '';
-
-    // --- Sem 2 State ---
-    sem2File: File | null = null;
-    sem2ImagePreviewUrl: string | null = null;
-    sem2IsExtracting: boolean = false;
-    sem2IsVerifying: boolean = false;
-    sem2ExtractedData: ExtractedMarksheetData | null = null;
-    sem2VerificationFailed: boolean = false;
-    sem2VerificationMessage: string = '';
-    sem2ExtractionError: string = '';
-
-    constructor(
-        public dialogRef: MatDialogRef<DocumentUploadDialogComponent>,
-        @Inject(MAT_DIALOG_DATA) public data: { document_name: string, document_id: number, file?: File },
-        private extractionService: DocumentExtractionService
-    ) {
-        // Prevent closing by clicking outside or escape
-        dialogRef.disableClose = true;
-    }
-
-    ngOnInit(): void {
-        const docNameLower = this.data.document_name.toLowerCase();
-        const isSem1Title = /(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(docNameLower) && /mark\s*sheet|marksheet/.test(docNameLower);
-        this.isDualUpload = this.data.document_id === 390 || isSem1Title;
-        this.isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(docNameLower);
-
-        if (this.data.file) {
-            this.sem1File = this.data.file;
-            if (!this.validateSelectedFile(this.sem1File, 1)) {
-                return;
-            }
-            if (this.sem1File.type.startsWith('image/')) {
-                const reader = new FileReader();
-                reader.onload = e => this.sem1ImagePreviewUrl = reader.result as string;
-                reader.readAsDataURL(this.sem1File);
-            }
-            this.extractData(1);
-        }
-    }
-
-    onFileSelected(event: any, docIndex: number): void {
+    onFileSelected(event: any, index: number): void {
         if (event.target.files && event.target.files.length > 0) {
-            const file = event.target.files[0];
-
-            if (!this.validateSelectedFile(file, docIndex)) {
-                event.target.value = '';
-                return;
-            }
-            
-            if (docIndex === 1) {
-                this.sem1File = file;
-                this.sem1ExtractionError = '';
-                this.sem1VerificationFailed = false;
-
-                if (file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = e => this.sem1ImagePreviewUrl = reader.result as string;
-                    reader.readAsDataURL(file);
-                } else {
-                    this.sem1ImagePreviewUrl = null;
-                }
-            } else {
-                this.sem2File = file;
-                this.sem2ExtractionError = '';
-                this.sem2VerificationFailed = false;
-
-                if (file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = e => this.sem2ImagePreviewUrl = reader.result as string;
-                    reader.readAsDataURL(file);
-                } else {
-                    this.sem2ImagePreviewUrl = null;
-                }
-            }
-
-            // Auto-start extraction and verification for the specific document
-            this.extractData(docIndex);
+            this.handleFileForIndex(event.target.files[0], index);
+            event.target.value = ''; // Reset input
         }
     }
 
-    private validateSelectedFile(file: File, docIndex: number): boolean {
-        const maxFileSizeMb = this.isVerificationOnlyDoc ? this.maxFileSizeMbVerificationOnly : this.maxFileSizeMbMarksheet;
+    private handleFileForIndex(file: File, index: number): void {
+        const state = this.documentsState[index];
+        if (!state) return;
+
+        const maxFileSizeMb = state.isVerificationOnlyDoc ? this.maxFileSizeMbVerificationOnly : this.maxFileSizeMbMarksheet;
         const fileSizeInMb = file.size / (1024 * 1024);
-        if (fileSizeInMb <= maxFileSizeMb) {
-            return true;
+        
+        if (fileSizeInMb > maxFileSizeMb) {
+            const roundedSize = Math.round(fileSizeInMb * 100) / 100;
+            state.file = null;
+            state.imagePreviewUrl = null;
+            state.extractedData = null;
+            state.isExtracting = false;
+            state.isVerifying = false;
+            state.verificationFailed = true;
+            state.verificationMessage = '✗ File too large';
+            state.extractionError = `File size ${roundedSize} MB exceeds limit of ${maxFileSizeMb} MB. Please upload a smaller file.`;
+            return;
         }
 
-        const roundedSize = Math.round(fileSizeInMb * 100) / 100;
-        const message = `File size ${roundedSize} MB exceeds limit of ${maxFileSizeMb} MB. Please upload a smaller file.`;
+        state.file = file;
+        state.extractionError = '';
+        state.verificationFailed = false;
 
-        if (docIndex === 1) {
-            this.sem1File = null;
-            this.sem1ImagePreviewUrl = null;
-            this.sem1ExtractedData = null;
-            this.sem1IsExtracting = false;
-            this.sem1IsVerifying = false;
-            this.sem1VerificationFailed = true;
-            this.sem1VerificationMessage = '✗ File too large';
-            this.sem1ExtractionError = message;
+        if (file.type.startsWith('image/')) {
+            const reader = new FileReader();
+            reader.onload = e => state.imagePreviewUrl = reader.result as string;
+            reader.readAsDataURL(file);
         } else {
-            this.sem2File = null;
-            this.sem2ImagePreviewUrl = null;
-            this.sem2ExtractedData = null;
-            this.sem2IsExtracting = false;
-            this.sem2IsVerifying = false;
-            this.sem2VerificationFailed = true;
-            this.sem2VerificationMessage = '✗ File too large';
-            this.sem2ExtractionError = message;
+            state.imagePreviewUrl = null;
         }
 
-        return false;
+        this.extractData(index);
     }
 
-    extractData(docIndex: number): void {
-        const file = docIndex === 1 ? this.sem1File : this.sem2File;
-        if (!file) return;
+    extractData(index: number): void {
+        const state = this.documentsState[index];
+        if (!state || !state.file) return;
 
-        let docName = this.data.document_name;
-        if (this.isDualUpload) {
-            docName = docIndex === 1 ? 'Sem 1 Marksheet' : 'Sem 2 Marksheet';
-        }
+        state.isExtracting = true;
+        state.isVerifying = true;
+        state.verificationMessage = 'Verifying document...';
+        state.extractionError = '';
 
-        if (docIndex === 1) {
-            this.sem1IsExtracting = true;
-            this.sem1IsVerifying = true;
-            this.sem1VerificationMessage = 'Verifying document...';
-            this.sem1ExtractionError = '';
-        } else {
-            this.sem2IsExtracting = true;
-            this.sem2IsVerifying = true;
-            this.sem2VerificationMessage = 'Verifying document...';
-            this.sem2ExtractionError = '';
-        }
-
-        if (this.isVerificationOnlyDoc) {
-            this.extractionService.verifyDocument(file, docName).subscribe({
+        if (state.isVerificationOnlyDoc) {
+            this.extractionService.verifyDocument(state.file, state.document_name).subscribe({
                 next: (response) => {
+                    state.isExtracting = false;
+                    state.isVerifying = false;
                     const verification = response?.verification;
                     const isValid = !!(response?.success && verification?.isValid);
                     const reason = verification?.reason || response?.error || '';
-                    const detailedReason = this.buildInvalidDocumentMessage(reason, docName, false);
-
-                    if (docIndex === 1) {
-                        this.sem1IsExtracting = false;
-                        this.sem1IsVerifying = false;
-                        if (isValid) {
-                            this.sem1VerificationFailed = false;
-                            this.sem1VerificationMessage = `✓ Verified as ${docName}`;
-                            this.sem1ExtractedData = null;
-                        } else {
-                            this.sem1VerificationFailed = true;
-                            this.sem1VerificationMessage = `✗ Invalid ${docName}`;
-                            this.sem1ExtractionError = detailedReason;
-                        }
+                    
+                    if (isValid) {
+                        state.verificationFailed = false;
+                        state.verificationMessage = `✓ Verified as ${state.document_name}`;
+                        state.extractedData = null;
                     } else {
-                        this.sem2IsExtracting = false;
-                        this.sem2IsVerifying = false;
-                        if (isValid) {
-                            this.sem2VerificationFailed = false;
-                            this.sem2VerificationMessage = `✓ Verified as ${docName}`;
-                            this.sem2ExtractedData = null;
-                        } else {
-                            this.sem2VerificationFailed = true;
-                            this.sem2VerificationMessage = `✗ Invalid ${docName}`;
-                            this.sem2ExtractionError = detailedReason;
-                        }
+                        state.verificationFailed = true;
+                        state.verificationMessage = `✗ Invalid ${state.document_name}`;
+                        state.extractionError = this.buildInvalidDocumentMessage(reason, state.document_name, false);
                     }
                 },
                 error: (error) => {
-                    const detailedReason = this.buildInvalidDocumentMessage(error?.message || 'Failed to verify document.', docName, false);
-                    if (docIndex === 1) {
-                        this.sem1IsExtracting = false;
-                        this.sem1IsVerifying = false;
-                        this.sem1VerificationFailed = true;
-                        this.sem1VerificationMessage = `✗ Invalid ${docName}`;
-                        this.sem1ExtractionError = detailedReason;
-                    } else {
-                        this.sem2IsExtracting = false;
-                        this.sem2IsVerifying = false;
-                        this.sem2VerificationFailed = true;
-                        this.sem2VerificationMessage = `✗ Invalid ${docName}`;
-                        this.sem2ExtractionError = detailedReason;
-                    }
+                    state.isExtracting = false;
+                    state.isVerifying = false;
+                    state.verificationFailed = true;
+                    state.verificationMessage = `✗ Invalid ${state.document_name}`;
+                    const backendError = error?.error?.error || error?.message || 'Failed to verify document.';
+                    state.extractionError = this.buildInvalidDocumentMessage(backendError, state.document_name, false);
                 }
             });
             return;
         }
 
-        this.extractionService.extractMarksheetData(file, docName).subscribe({
+        this.extractionService.extractMarksheetData(state.file, state.document_name).subscribe({
             next: (response) => {
-                if (docIndex === 1) {
-                    this.sem1IsExtracting = false;
-                    this.sem1IsVerifying = false;
-                    if (response.success && response.data) {
-                        this.sem1VerificationMessage = `✓ Verified as ${docName}`;
-                        this.sem1ExtractedData = response.data;
-                    } else {
-                        const detailedReason = this.buildInvalidDocumentMessage(response.error || 'Failed to extract data.', docName, true);
-                        this.sem1VerificationFailed = true;
-                        this.sem1VerificationMessage = `✗ Invalid ${docName}`;
-                        this.sem1ExtractionError = detailedReason;
-                    }
+                state.isExtracting = false;
+                state.isVerifying = false;
+                if (response.success && response.data) {
+                    state.verificationMessage = `✓ Verified as ${state.document_name}`;
+                    state.extractedData = response.data;
                 } else {
-                    this.sem2IsExtracting = false;
-                    this.sem2IsVerifying = false;
-                    if (response.success && response.data) {
-                        this.sem2VerificationMessage = `✓ Verified as ${docName}`;
-                        this.sem2ExtractedData = response.data;
-                    } else {
-                        const detailedReason = this.buildInvalidDocumentMessage(response.error || 'Failed to extract data.', docName, true);
-                        this.sem2VerificationFailed = true;
-                        this.sem2VerificationMessage = `✗ Invalid ${docName}`;
-                        this.sem2ExtractionError = detailedReason;
-                    }
+                    state.verificationFailed = true;
+                    state.verificationMessage = `✗ Invalid ${state.document_name}`;
+                    state.extractionError = this.buildInvalidDocumentMessage(response.error || 'Failed to extract data.', state.document_name, true);
                 }
             },
             error: (error) => {
-                const detailedReason = this.buildInvalidDocumentMessage(error?.message || 'Failed to extract data.', docName, true);
-                if (docIndex === 1) {
-                    this.sem1IsExtracting = false;
-                    this.sem1IsVerifying = false;
-                    this.sem1VerificationFailed = true;
-                    this.sem1VerificationMessage = `✗ Invalid ${docName}`;
-                    this.sem1ExtractionError = detailedReason;
-                } else {
-                    this.sem2IsExtracting = false;
-                    this.sem2IsVerifying = false;
-                    this.sem2VerificationFailed = true;
-                    this.sem2VerificationMessage = `✗ Invalid ${docName}`;
-                    this.sem2ExtractionError = detailedReason;
-                }
+                state.isExtracting = false;
+                state.isVerifying = false;
+                state.verificationFailed = true;
+                state.verificationMessage = `✗ Invalid ${state.document_name}`;
+                
+                const backendError = error?.error?.error || error?.message || 'Failed to extract data.';
+                state.extractionError = this.buildInvalidDocumentMessage(backendError, state.document_name, true);
             }
         });
     }
 
-    submit(): void {
-        if (!this.isDualUpload) {
-            if (this.sem1File && (this.sem1ExtractedData || (this.isVerificationOnlyDoc && !this.sem1VerificationFailed && !this.sem1IsVerifying))) {
-                this.dialogRef.close({
-                    success: true,
-                    document_id: this.data.document_id,
-                    file: this.sem1File,
-                    extractedData: this.sem1ExtractedData
-                });
-            }
-        } else {
-            // Dual upload: upload both files to server first, then close with filenames
-            if (this.sem1File && this.sem1ExtractedData && this.sem2File && this.sem2ExtractedData) {
-                this.isSubmitting = true;
-                this.submitError = '';
-                const sem1DocId = 390;
-                const sem2DocId = 389;
-                const sem1Upload$ = this.extractionService.uploadDocImage(this.sem1File, sem1DocId);
-                const sem2Upload$ = this.extractionService.uploadDocImage(this.sem2File, 389);
-                forkJoin({ sem1: sem1Upload$, sem2: sem2Upload$ }).subscribe({
-                    next: (results: any) => {
-                        this.isSubmitting = false;
-                        this.dialogRef.close({
-                            success: true,
-                            document_id: sem1DocId,
-                            sem2_document_id: sem2DocId,
-                            fileName: results.sem2?.dataJson?.fileName || '',
-                            extractedData: this.sem2ExtractedData,
-                            sem1Data: {
-                                document_id: sem1DocId,
-                                fileName: results.sem1?.dataJson?.fileName || '',
-                                extractedData: this.sem1ExtractedData
-                            }
-                        });
-                    },
-                    error: (err: any) => {
-                        this.isSubmitting = false;
-                        this.submitError = 'Upload failed. Please check the server connection and try again.';
-                        console.error('[DIALOG] Dual upload error:', err);
-                    }
-                });
-            }
-        }
+    retryExtraction(index: number): void {
+        const state = this.documentsState[index];
+        if (!state) return;
+        state.extractionError = '';
+        state.verificationFailed = false;
+        state.extractedData = null;
+        if (state.file) this.extractData(index);
     }
 
-    retryExtraction(docIndex: number): void {
-        if (docIndex === 1) {
-            this.sem1ExtractionError = '';
-            this.sem1VerificationFailed = false;
-            this.sem1ExtractedData = null;
-            if (this.sem1File) this.extractData(1);
-        } else {
-            this.sem2ExtractionError = '';
-            this.sem2VerificationFailed = false;
-            this.sem2ExtractedData = null;
-            if (this.sem2File) this.extractData(2);
+    get isSubmitDisabled(): boolean {
+        if (this.isSubmitting || this.documentsState.length === 0) return true;
+        
+        // Disable if ANY document doesn't have a file, or is verifying/extracting, or failed verification
+        return this.documentsState.some(state => {
+            if (!state.file) return true;
+            if (state.isVerifying || state.isExtracting) return true;
+            if (state.verificationFailed) return true;
+            if (!state.isVerificationOnlyDoc && !state.extractedData) return true;
+            return false;
+        });
+    }
+
+    submit(): void {
+        if (this.isSubmitDisabled) return;
+
+        this.isSubmitting = true;
+        this.submitError = '';
+
+        // If it's the exact magic dual upload scenario Sem1/Sem2
+        const isMagicDual = this.documentsState.length === 2 && 
+                            this.documentsState[0].document_id === 390 && 
+                            this.documentsState[1].document_id === 389;
+
+        if (isMagicDual) {
+            const sem1Upload$ = this.extractionService.uploadDocImage(this.documentsState[0].file!, 390);
+            const sem2Upload$ = this.extractionService.uploadDocImage(this.documentsState[1].file!, 389);
+            forkJoin({ sem1: sem1Upload$, sem2: sem2Upload$ }).subscribe({
+                next: (results: any) => {
+                    this.isSubmitting = false;
+                    this.dialogRef.close({
+                        success: true,
+                        document_id: 390,
+                        sem2_document_id: 389,
+                        fileName: results.sem2?.dataJson?.fileName || '',
+                        extractedData: this.documentsState[1].extractedData,
+                        sem1Data: {
+                            document_id: 390,
+                            fileName: results.sem1?.dataJson?.fileName || '',
+                            extractedData: this.documentsState[0].extractedData
+                        }
+                    });
+                },
+                error: (err: any) => {
+                    this.isSubmitting = false;
+                    this.submitError = 'Upload failed. Please check the server connection and try again.';
+                }
+            });
+            return;
         }
+
+        // Generic bulk submit - return all documents to the parent to handle uploading
+        this.dialogRef.close({
+            success: true,
+            documents: this.documentsState.map(state => ({
+                document_id: state.document_id,
+                document_name: state.document_name,
+                file: state.file,
+                extractedData: state.extractedData
+            }))
+        });
     }
 }

@@ -6730,8 +6730,9 @@ export class SharedAdmissionFormComponent implements OnInit {
              });
           }
 
-          // dataJson IS the documents array
-          this.setDocumentsValues({ documents: response.dataJson });
+          // Ensure AI-configured documents are present in the list
+          const adjustedResponse = this.ensureAiDocumentConfigRows(response.dataJson, response.aiDocumentVerification || this.formData?.personalInfo?.aiDocumentVerification || this.formData?.aiDocumentVerification);
+          this.setDocumentsValues({ documents: adjustedResponse });
         } else {
           console.log('[DOCUMENTS] No documents in API response or error status. Status:', response.status, 'dataJson type:', typeof response.dataJson);
         }
@@ -7952,54 +7953,23 @@ export class SharedAdmissionFormComponent implements OnInit {
         documents['controls'].isBrowsed.setValue(false);
 
       } else {
-
-        // Only use AI extraction dialog for marksheet-type documents.
-        // Other documents (caste cert, birth cert, leaving cert, etc.) go straight to upload.
-        const docTitle = (documents['controls'].docTitle.value || '').toLowerCase();
-        const normalizedDocTitle = docTitle.replace(/\s+/g, ' ').trim();
-        const isVerificationOnlyDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard|address\s*proof|physically\s*handicapped|visually\s*impaired|learning\s*disability|disability|abc\s*id|academic\s*bank\s*of\s*credits)\b/.test(normalizedDocTitle);
-        const isAadhaarDoc = /\b(aadhaar|aadhar|adhar|uidai|aadhaarcard|aadharcard|adharcard)\b/.test(normalizedDocTitle);
-        // Aadhaar must never be routed through marksheet extraction even if title has mixed terms.
-        const isMarksheetDoc = !isVerificationOnlyDoc &&
-          /\b(marksheet|mark\s*sheet|ssc|hsc|semester|sem|diploma|degree|10th|12th)\b/.test(normalizedDocTitle);
-
         let aiDocumentVerificationEnabled = false;
         try {
-            // Resolve the raw value from formData (supports multiple nesting paths)
-            let rawAiFlag: any = undefined;
-            if (this.formData?.personalInfo?.aiDocumentVerification !== undefined) {
-                rawAiFlag = this.formData.personalInfo.aiDocumentVerification;
-            } else if (this.formData?.aiDocumentVerification !== undefined) {
-                rawAiFlag = this.formData.aiDocumentVerification;
-            } else if (this.formData?.personal_info_config?.aiDocumentVerification !== undefined) {
-                rawAiFlag = this.formData.personal_info_config.aiDocumentVerification;
-            } else if (typeof this.formData?.personal_info_config === 'string') {
-                const pic = JSON.parse(this.formData.personal_info_config);
-                rawAiFlag = pic?.aiDocumentVerification;
-            } else if (typeof this.formData?.personalInfo?.personal_info_config === 'string') {
-                const pic = JSON.parse(this.formData.personalInfo.personal_info_config);
-                rawAiFlag = pic?.aiDocumentVerification;
-            }
+            const rawAiFlag =
+                this.formData?.personalInfo?.aiDocumentVerification ??
+                this.formData?.aiDocumentVerification ??
+                this.formData?.personal_info_config?.aiDocumentVerification ??
+                (typeof this.formData?.personal_info_config === 'string'
+                    ? JSON.parse(this.formData.personal_info_config)?.aiDocumentVerification
+                    : undefined) ??
+                (typeof this.formData?.personalInfo?.personal_info_config === 'string'
+                    ? JSON.parse(this.formData.personalInfo.personal_info_config)?.aiDocumentVerification
+                    : undefined);
 
-            console.log('[AI DEBUG] formData:', this.formData);
-            console.log('[AI DEBUG] rawAiFlag:', rawAiFlag);
+            aiDocumentVerificationEnabled = Array.isArray(rawAiFlag) ? rawAiFlag.length > 0 : !!rawAiFlag;
+        } catch (e) { /* ignore parse errors */ }
 
-            if (Array.isArray(rawAiFlag)) {
-                // Array format: [{document_id: 183, document_name: '12th Marksheet', show: true}]
-                const currentDocId = documents['controls'].docId.value;
-                console.log('[AI DEBUG] currentDocId:', currentDocId, 'type:', typeof currentDocId);
-                const matchingDoc = rawAiFlag.find((d: any) => String(d.document_id) === String(currentDocId) && d.show === true);
-                console.log('[AI DEBUG] matchingDoc:', matchingDoc);
-                aiDocumentVerificationEnabled = !!matchingDoc;
-            } else {
-                // Boolean format: true / false
-                aiDocumentVerificationEnabled = !!rawAiFlag;
-            }
-        } catch (e) { console.error('[AI DEBUG] Error:', e); }
-
-        console.log('[AI DEBUG] isMarksheetDoc:', isMarksheetDoc, '| aiEnabled:', aiDocumentVerificationEnabled);
-
-        if (isMarksheetDoc && aiDocumentVerificationEnabled) {
+        if (aiDocumentVerificationEnabled) {
         // Open Document Upload Dialog for AI Verification and Extraction (for both PDF and images)
         const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
           width: '800px',
@@ -8014,6 +7984,30 @@ export class SharedAdmissionFormComponent implements OnInit {
         dialogRef.afterClosed().subscribe(result => {
           if (result && result.success) {
             console.log('Dialog success, uploading file and patching data...');
+
+            // ---- GENERIC (non-marksheet) path: dialog returns result.documents array ----
+            // This handles Aadhaar, Caste Cert, and any other verification-only docs.
+            if (result.documents && Array.isArray(result.documents) && !result.sem1Data && !result.fileName) {
+              result.documents.forEach((docResult: any) => {
+                const verFile = docResult.file;
+                if (!verFile) return;
+
+                const verExt = (verFile.name || '').toUpperCase().split('.').pop() || ext;
+                if (verExt === 'PDF') {
+                  this.browsedDocData(verFile, docIndex, bunchIndex, 'PDF');
+                } else {
+                  const postParam = { mode: 'documents', docIndex, bunchIndex };
+                  this.openImageCropperDialog(event, postParam);
+                }
+
+                if (docResult.extractedData) {
+                  this.patchExtractedData(docResult.extractedData, documents['controls'].docId.value, verFile.name);
+                }
+              });
+              return;
+            }
+            // ---- END GENERIC path ----
+
             const SEM1_DOC_ID = 390;
             const SEM2_DOC_ID = 389;
 
@@ -8042,6 +8036,7 @@ export class SharedAdmissionFormComponent implements OnInit {
                       break;
                     }
                   }
+                  if (matchedById) break;
                 }
               }
 
@@ -8053,10 +8048,17 @@ export class SharedAdmissionFormComponent implements OnInit {
                       resolvedDocIndex = d;
                       resolvedBunchIndex = b;
                       resolvedDocId = this.documentsBunch[d][b].value.docId;
+                      matchedById = true;
                       break;
                     }
                   }
+                  if (matchedById) break;
                 }
+              }
+
+              // As a final fallback, use the current document that was selected for upload.
+              if (!matchedById && this.documentsBunch[fallbackDocIndex] && this.documentsBunch[fallbackDocIndex][fallbackBunchIndex]) {
+                resolvedDocId = this.documentsBunch[fallbackDocIndex][fallbackBunchIndex].value.docId;
               }
 
               return { resolvedDocIndex, resolvedBunchIndex, resolvedDocId };
@@ -8079,10 +8081,11 @@ export class SharedAdmissionFormComponent implements OnInit {
                 sem1DocControl['controls'].uploadedFile.setValue(result.sem1Data.fileName);
                 sem1DocControl['controls'].docToUpload.setValue(result.sem1Data.fileName);
                 sem1DocControl['controls'].hasPhoto.setValue(fnLC.endsWith('.pdf') ? this.defaultPdfImage : result.sem1Data.fileName);
-                this.updateDocumentStatus(sem1Resolved.resolvedDocId);
+                const finalSem1DocId = sem1DocControl.get('docId')?.value || sem1Resolved.resolvedDocId;
+                this.updateDocumentStatus(finalSem1DocId, result.sem1Data.fileName);
               }
               try {
-                this.patchExtractedData(result.sem1Data.extractedData, sem1Resolved.resolvedDocId);
+                this.patchExtractedData(result.sem1Data.extractedData, sem1Resolved.resolvedDocId, result.sem1Data.fileName);
               } catch (e) {
                 console.error('[SEM1] Error patching Sem 1 extracted data:', e);
               }
@@ -8091,9 +8094,9 @@ export class SharedAdmissionFormComponent implements OnInit {
             // At this point, `result` represents the final document in the dialog flow
             // If there's Sem 1 data, `result` is Sem 2. If no Sem 1 data, `result` is just the single uploaded document.
             
-            // Find Sem 2's grid coordinates if this was a sequence upload
+            // Find Sem 2's grid coordinates if this was a sequence upload or single marksheet upload
             const sem2Resolved = resolveDocumentPosition(
-              result.sem2_document_id || SEM2_DOC_ID || result.document_id,
+              result.sem2_document_id || result.document_id || SEM2_DOC_ID,
               2,
               docIndex,
               bunchIndex
@@ -8110,7 +8113,8 @@ export class SharedAdmissionFormComponent implements OnInit {
                 sem2DocControl['controls'].uploadedFile.setValue(result.fileName);
                 sem2DocControl['controls'].docToUpload.setValue(result.fileName);
                 sem2DocControl['controls'].hasPhoto.setValue(fnLC.endsWith('.pdf') ? this.defaultPdfImage : result.fileName);
-                this.updateDocumentStatus(sem2Resolved.resolvedDocId);
+                const finalSem2DocId = sem2DocControl.get('docId')?.value || sem2Resolved.resolvedDocId;
+                this.updateDocumentStatus(finalSem2DocId, result.fileName);
               }
             } else {
               // Single upload path: file still needs to be uploaded
@@ -8129,7 +8133,9 @@ export class SharedAdmissionFormComponent implements OnInit {
 
             // If data was extracted, auto-fill the form
             if (result.extractedData) {
-              this.patchExtractedData(result.extractedData, sem2Resolved.resolvedDocId || result.document_id);
+              const patchDocId = (this.documentsBunch[sem2Resolved.resolvedDocIndex]?.[sem2Resolved.resolvedBunchIndex]?.value?.docId)
+                                   || sem2Resolved.resolvedDocId || result.document_id;
+              this.patchExtractedData(result.extractedData, patchDocId, result.fileName || result.sem2Data?.fileName);
             }
           } else {
             // User cancelled or verification failed
@@ -8140,43 +8146,16 @@ export class SharedAdmissionFormComponent implements OnInit {
         });
 
         } else {
-          // Non-marksheet document: skip AI dialog, go straight to upload
-          const proceedWithUpload = () => {
-            if (ext.toUpperCase() == 'PDF' || isVerificationOnlyDoc) {
-              this.browsedDocData(file, docIndex, bunchIndex, ext.toUpperCase() == 'PDF' ? 'PDF' : ext);
-            } else {
-              let postParam = {
-                mode: 'documents',
-                docIndex: docIndex,
-                bunchIndex: bunchIndex,
-              };
-              this.openImageCropperDialog(event, postParam);
-            }
-          };
-
-          if (isVerificationOnlyDoc) {
-            this.allEventEmitters.showLoader.emit(true);
-            this.documentExtractionService.verifyDocument(file, documents['controls'].docTitle.value || 'Document').subscribe({
-              next: (verifyRes) => {
-                this.allEventEmitters.showLoader.emit(false);
-                if (verifyRes?.success && verifyRes?.verification?.isValid) {
-                  proceedWithUpload();
-                } else {
-                  const reason = verifyRes?.verification?.reason || verifyRes?.error || 'Uploaded file is not a valid document.';
-                  documents['controls'].isBrowsed.setValue(false);
-                  event.target.value = '';
-                  this._snackBarMsgComponent.openSnackBar(`Document validation failed: ${reason}`, 'x', 'error-snackbar', 6000);
-                }
-              },
-              error: (verifyErr) => {
-                this.allEventEmitters.showLoader.emit(false);
-                documents['controls'].isBrowsed.setValue(false);
-                event.target.value = '';
-                this._snackBarMsgComponent.openSnackBar(`Document validation failed: ${verifyErr?.message || 'Unable to validate document.'}`, 'x', 'error-snackbar', 6000);
-              }
-            });
+          // If AI verification is completely disabled, proceed straight to upload
+          if (ext.toUpperCase() == 'PDF') {
+            this.browsedDocData(file, docIndex, bunchIndex, 'PDF');
           } else {
-            proceedWithUpload();
+            let postParam = {
+              mode: 'documents',
+              docIndex: docIndex,
+              bunchIndex: bunchIndex,
+            };
+            this.openImageCropperDialog(event, postParam);
           }
         }
       }
@@ -8272,31 +8251,34 @@ export class SharedAdmissionFormComponent implements OnInit {
 
   /**
    * After a document is uploaded in the Upload Documents section,
-   * also mark the matching underGraduate.list row as uploaded.
-   * reqConfId 182 = SSC, 183 = HSC.
+   * also mark the matching education list row as uploaded.
    */
   updateEduListRowUploadStatus(docId: any, fileName: string) {
     if (!docId || !fileName) return;
 
     try {
-      const underGraduateList = this.educationInfoForm.get('eduInfo.underGraduate.list') as FormArray;
-      if (!underGraduateList || underGraduateList.length === 0) return;
+      const eduLevels = ['underGraduate', 'graduate', 'postGraduate', 'masterGraduate'];
+      
+      for (const level of eduLevels) {
+        const eduList = this.educationInfoForm.get(`eduInfo.${level}.list`) as FormArray;
+        if (!eduList || eduList.length === 0) continue;
 
-      for (let i = 0; i < underGraduateList.length; i++) {
-        const row = underGraduateList.at(i);
-        if (row.get('reqConfId')?.value == docId) {
-          console.log(`[UPLOAD] Marking underGraduate.list[${i}] (reqConfId=${docId}) as uploaded with file: ${fileName}`);
-          row.patchValue({
-            hasUploadedDoc: true,
-            docBrowsed: false,
-            docToUpload: fileName,
-            docError: false
-          }, { emitEvent: false });
-          break;
+        for (let i = 0; i < eduList.length; i++) {
+          const row = eduList.at(i);
+          if (row.get('reqConfId')?.value == docId) {
+            console.log(`[UPLOAD] Marking ${level}.list[${i}] (reqConfId=${docId}) as uploaded with file: ${fileName}`);
+            row.patchValue({
+              hasUploadedDoc: true,
+              docBrowsed: false,
+              docToUpload: fileName,
+              docError: false
+            }, { emitEvent: false });
+            return; // Found and updated, we can return early
+          }
         }
       }
     } catch (e) {
-      console.warn('[UPLOAD] Could not update underGraduate list row upload status', e);
+      console.warn('[UPLOAD] Could not update education list row upload status', e);
     }
   }
   openImageCropperDialog(imageEvent, postParam: any) {
@@ -9956,12 +9938,9 @@ export class SharedAdmissionFormComponent implements OnInit {
 
     console.log('[UPLOAD] Education document - reqConfId:', reqConfId);
 
-    if (reqConfId == 182) {
-      docId = 182;
-      console.log('[UPLOAD] reqConfId 182 = SSC, using docId:', docId);
-    } else if (reqConfId == 183) {
-      docId = 183;
-      console.log('[UPLOAD] reqConfId 183 = HSC, using docId:', docId);
+    if (reqConfId && reqConfId > 0) {
+      docId = reqConfId;
+      console.log('[UPLOAD] Using reqConfId as docId:', docId);
     } else {
       // Fallback: try to detect from confName if reqConfId is not set
       const confName = control.get('confNameSelected')?.value || '';
@@ -9976,7 +9955,7 @@ export class SharedAdmissionFormComponent implements OnInit {
       }
     }
 
-    // If this is HSC/SSC and we have docId, use the same upload method as Upload Documents section
+    // If we have docId, use the same upload method as Upload Documents section
     if (docId) {
       const ext = data.name.toLowerCase().split('.').pop();
       control.controls.docUploading.setValue(true, { emitEvent: false });
@@ -10627,7 +10606,9 @@ export class SharedAdmissionFormComponent implements OnInit {
     }
 
     const titleLower = docTitle.toLowerCase();
-    return titleLower.includes('hsc') || titleLower.includes('ssc') || titleLower.includes('12th') || titleLower.includes('10th');
+    return titleLower.includes('hsc') || titleLower.includes('ssc') || 
+           titleLower.includes('12th') || titleLower.includes('10th') || 
+           titleLower.includes('12') || titleLower.includes('10');
   }
 
   getUploadedFileName(itemrow: UntypedFormGroup): string {
@@ -10650,9 +10631,9 @@ export class SharedAdmissionFormComponent implements OnInit {
 
     if (!data) return;
 
-    // 1. Patch Personal Info
-    if (data.personalInfo) {
-      const pi = data.personalInfo;
+    // 1. Patch Personal Information (handles nested and flat responses)
+    if (data.personalInfo || data.studentInfo || data.candidateName || data.studentName || data.full_name) {
+      const pi = data.personalInfo || data.studentInfo || data;
       const piForm = this.personalInfoForm;
 
       const patchValues: any = {};
@@ -10661,6 +10642,13 @@ export class SharedAdmissionFormComponent implements OnInit {
       if (pi.lastName) patchValues.lastName = pi.lastName;
       if (pi.mothersName) patchValues.motherName = pi.mothersName;
       if (pi.candidateName) patchValues.fullNameMarksheet = pi.candidateName;
+      if (pi.dob) patchValues.dob = pi.dob;
+      if (pi.dateOfBirth) patchValues.dob = pi.dateOfBirth;
+      if (piForm.get('seatNo')) {
+        if (pi.seatNo) patchValues.seatNo = pi.seatNo;
+        if (pi.seat_number) patchValues.seatNo = pi.seat_number;
+        if (pi.rollNo) patchValues.seatNo = pi.rollNo;
+      }
 
       // Handle Gender
       if (pi.gender) {
@@ -10694,7 +10682,15 @@ export class SharedAdmissionFormComponent implements OnInit {
         !!aiDetectedName &&
         normalizeName(existingName) !== normalizeName(aiDetectedName);
 
-      if (existingFirstName) {
+      const isPrimaryMarksheet =
+        !!pi.primary_marksheet ||
+        !!pi.primaryMarksheet ||
+        !!data.primary_marksheet ||
+        !!data.primaryMarksheet;
+
+      const autoApplyNameFromPrimary = isPrimaryMarksheet && !!aiDetectedName;
+
+      if (existingFirstName && !autoApplyNameFromPrimary) {
         delete patchValues.firstName;
         delete patchValues.middleName;
         delete patchValues.lastName;
@@ -10706,11 +10702,20 @@ export class SharedAdmissionFormComponent implements OnInit {
       console.log('Patching Personal Info:', patchValues);
       piForm.patchValue(patchValues);
 
-      if (!existingName && hasAiNameValues) {
-        this.isNameChangeFromAi = 1;
-      }
+      // No explicit studentName control at the root level, handled via fullNameMarksheet if needed
 
-      if (shouldAskNameOverwrite) {
+      if (autoApplyNameFromPrimary) {
+        piForm.patchValue(aiNamePatch);
+        piForm.patchValue({
+          isNameChangeFromAi: 1,
+          is_name_change_from_ai: 1,
+          oldName: existingName,
+          oldFullName: existingName,
+          aiBasedNameChange: aiDetectedName
+        });
+        this.isNameChangeFromAi = 1;
+        this._snackBarMsgComponent.openSnackBar('Primary marksheet matched: student name auto-updated from AI.', 'x', 'success-snackbar', 3500);
+      } else if (shouldAskNameOverwrite) {
         const confirmRef = this.dialog.open(ConfirmDialogComponent, {
           height: 'auto',
           width: '520px',
@@ -10745,17 +10750,32 @@ export class SharedAdmissionFormComponent implements OnInit {
     // 2. Patch Academic Info
     console.log('[DEBUG] Document ID for Patching:', docId);
 
-    if (data.academicInfo) {
-      const ai = data.academicInfo;
-      console.log('[DEBUG] Academic Info:', ai);
+    if (data.academicInfo || data.seatNo || data.candidateName || data.board) {
+      const ai = data.academicInfo || data;
+      const apiPersonal = data.personalInfo || data.studentInfo || {};
+      console.log('[DEBUG] Academic Data (Using Fallbacks):', ai, 'Personal shortcuts:', apiPersonal);
 
-      const exam = (ai.examination || '').toLowerCase();
+      // Ensure extracted personal seatNo and dob are considered too
+      if (!ai.seatNo && apiPersonal.seatNo) ai.seatNo = apiPersonal.seatNo;
+      if (!ai.seatNo && apiPersonal.seat_number) ai.seatNo = apiPersonal.seat_number;
+      if (!ai.seatNo && apiPersonal.rollNo) ai.seatNo = apiPersonal.rollNo;
+      if (!ai.dob && apiPersonal.dob) ai.dob = apiPersonal.dob;
+      if (!ai.dob && apiPersonal.dateOfBirth) ai.dob = apiPersonal.dateOfBirth;
 
-      // Default heuristic detection
-      let isHSC = exam.includes('hsc') || exam.includes('12th') || exam.includes('higher') || exam.includes('twelfth');
-      let isSSC = !isHSC && (exam.includes('ssc') || exam.includes('10th') || exam.includes('secondary') || exam.includes('tenth'));
+      const exam = (ai.examination || ai.exam_name || ai.title || data.examination || data.exam_name || '').toLowerCase();
 
-      // --- Fallback match by document title (if AI detection isn't strong enough) ---
+      // Extended heuristic detection for flat responses or documents without 'examination' field
+      let isHSC = exam.includes('hsc') || exam.includes('12th') || exam.includes('higher') || exam.includes('twelfth') || 
+                  (String(docId) == '183');
+      let isSSC = !isHSC && (exam.includes('ssc') || exam.includes('10th') || exam.includes('secondary') || exam.includes('tenth') ||
+                  (String(docId) == '182'));
+      
+      const docTitle = this.findDocumentTitleById(docId).toLowerCase();
+      if (!isHSC && !isSSC && docTitle) {
+        if (docTitle.includes('hsc') || docTitle.includes('12th') || docTitle.includes('12 th')) isHSC = true;
+        if (docTitle.includes('ssc') || docTitle.includes('10th') || docTitle.includes('10 th')) isSSC = true;
+      }
+
       if (docId) {
         console.log(`[DEBUG] Document ID provided for patching: ${docId}`);
         const knownHscId = this.findDocumentIdByTitle(['hsc', '12th']);
@@ -10778,7 +10798,16 @@ export class SharedAdmissionFormComponent implements OnInit {
       // Prepare common values
       const academicValues: any = {};
       if (ai.board) academicValues.boardName = ai.board;
-      if (ai.schoolName) academicValues.schoolName = ai.schoolName;
+
+      // Aggressive alias matching for school/college
+      const schoolName = (
+        ai.schoolName || ai.collegeName || ai.instituteName || ai.schoolOrCollegeName || ai.nameOfInstitution || 
+        ai.school_name || ai.college_name || ai.institute_name || ai.school_college_name || ai.institution_name || ai.college ||
+        data.schoolName || data.collegeName || data.instituteName || data.school_name || data.college_name
+      );
+      if (schoolName && String(schoolName).trim()) {
+        academicValues.schoolName = String(schoolName).trim();
+      }
 
       const resolveYearAppearedValue = (yearValue: any) => {
         if (globalFunctions.isEmpty(yearValue)) return yearValue;
@@ -10829,31 +10858,78 @@ export class SharedAdmissionFormComponent implements OnInit {
         return monthMap[monthStr] || monthMap[monthStr.substring(0, 3)] || monthValue;
       };
 
-      if (ai.passingYear) {
-        const parsedYear = Number(ai.passingYear);
-        academicValues.yearOfPassing = parsedYear || ai.passingYear;
-        academicValues.yearAppeared = resolveYearAppearedValue(ai.passingYear);
+      const passingYear = ai.passingYear || ai.yearOfPassing || ai.examYear || ai.year || ai.passing_year || ai.year_of_passing || data.passingYear || data.yearOfPassing;
+      if (passingYear) {
+        const parsedYear = Number(passingYear);
+        academicValues.yearOfPassing = parsedYear || passingYear;
+        academicValues.yearAppeared = resolveYearAppearedValue(passingYear);
       }
-      if (ai.passingMonth) {
-        const resolvedMonth = resolveMonthAppearedValue(ai.passingMonth);
+
+      const passingMonth = ai.passingMonth || ai.monthOfPassing || ai.examMonth || ai.month || ai.passing_month || ai.month_of_passing || data.passingMonth || data.monthOfPassing;
+      if (passingMonth) {
+        const resolvedMonth = resolveMonthAppearedValue(passingMonth);
         academicValues.monthOfPassing = resolvedMonth;
         academicValues.monthAppeared = resolvedMonth;
       }
+
       if (ai.atktCount !== undefined && ai.atktCount !== null && String(ai.atktCount).trim() !== '') {
         const atktParsed = parseInt(String(ai.atktCount).replace(/[^0-9]/g, ''), 10);
         const atktValue = Number.isNaN(atktParsed) ? 0 : atktParsed;
         academicValues.noOfATKT = atktValue;
         academicValues.liveAtkt = atktValue;
       }
-      if (ai.marksObtained) academicValues.marksObtained = ai.marksObtained;
-      if (ai.marksOutof) academicValues.marksOutof = ai.marksOutof;
-      if (ai.percentage) academicValues.percentage = ai.percentage;
-      if (ai.cgpa) academicValues.cgpa = ai.cgpa;
+      if (ai.marksObtained || ai.marks_obtained) academicValues.marksObtained = ai.marksObtained || ai.marks_obtained;
+      if (ai.marksOutof || ai.marks_outof || ai.total_marks || ai.total_marks_outof) academicValues.marksOutof = ai.marksOutof || ai.marks_outof || ai.total_marks || ai.total_marks_outof;
+      if (ai.percentage || ai.percentage_obtained) academicValues.percentage = ai.percentage || ai.percentage_obtained;
+      if (ai.cgpa || ai.cgpi) academicValues.cgpa = ai.cgpa || ai.cgpi;
       if (ai.grade) academicValues.grade = ai.grade;
-      if (ai.creditPoints) academicValues.creditPoints = ai.creditPoints;
-      if (ai.creditGrade) academicValues.creditGrade = ai.creditGrade;
-      if (ai.seatNo) academicValues.seatNo = ai.seatNo;
+      if (ai.creditPoints || ai.credit_points) academicValues.creditPoints = ai.creditPoints || ai.credit_points;
+      if (ai.creditGrade || ai.credit_grade) academicValues.creditGrade = ai.creditGrade || ai.credit_grade;
 
+      // Aggressive alias matching for Seat / Roll Number
+      const seatNo = (
+        ai.seatNo || ai.seatNumber || ai.seat_no || ai.seat_number || ai.rollNo || ai.rollNumber || ai.roll_no || ai.roll_number || ai.seat_number_no || ai.seat_roll_no ||
+        data.seatNo || data.seat_no || data.rollNo || data.roll_no || data.seatNumber
+      );
+      if (seatNo && String(seatNo).trim()) {
+        academicValues.seatNo = String(seatNo).trim();
+        academicValues.rollNo = academicValues.seatNo; // Fallback alias
+      }
+      
+      // Force header visibility if data is present (ensures AI extracted fields appear in UI)
+      if (academicValues.schoolName) {
+        this.underGraduateHeaders.schoolName = true;
+        this.graduateHeaders.schoolName = true;
+        this.postGraduateHeaders.schoolName = true;
+        this.masterGraduateHeaders.schoolName = true;
+      }
+      if (academicValues.seatNo) {
+        this.underGraduateHeaders.seatNo = true;
+        this.graduateHeaders.seatNo = true;
+        this.postGraduateHeaders.seatNo = true;
+        this.masterGraduateHeaders.seatNo = true;
+      }
+      if (academicValues.monthAppeared || academicValues.monthOfPassing) {
+        this.underGraduateHeaders.monthAppeared = true;
+        this.graduateHeaders.monthAppeared = true;
+        this.postGraduateHeaders.monthAppeared = true;
+        this.masterGraduateHeaders.monthAppeared = true;
+      }
+      if (academicValues.yearAppeared || academicValues.yearOfPassing) {
+        this.underGraduateHeaders.yearAppeared = true;
+        this.graduateHeaders.yearAppeared = true;
+        this.postGraduateHeaders.yearAppeared = true;
+        this.masterGraduateHeaders.yearAppeared = true;
+      }
+
+      console.log('--- FINAL ACADEMIC VALUES FOR PATCHING ---');
+      console.log('Board:', academicValues.boardName);
+      console.log('School:', academicValues.schoolName);
+      console.log('Seat No:', academicValues.seatNo);
+      console.log('Year:', academicValues.yearAppeared);
+      console.log('Month:', academicValues.monthAppeared);
+      console.log('Marks:', academicValues.marksObtained, '/', academicValues.marksOutof);
+      console.log('-------------------------------------------');
       console.log('Patching Academic Info:', academicValues);
       console.log('[DEBUG] Form Visibility - showHscBlk PRE-UPDATE:', this.showHscBlk, 'showSscBlk PRE-UPDATE:', this.showSscBlk);
 
@@ -10884,8 +10960,9 @@ export class SharedAdmissionFormComponent implements OnInit {
           if (underGraduateList && underGraduateList.length > 0) {
             for (let i = 0; i < underGraduateList.length; i++) {
               const row = underGraduateList.at(i);
-              if (row.get('reqConfId')?.value == 182) {
-                console.log(`[DEBUG] Found SSC row in underGraduate.list at index ${i} (reqConfId=182). Patching...`);
+              const rowReqConfId = row.get('reqConfId')?.value;
+              if (rowReqConfId == 182 || (docId && rowReqConfId == docId)) {
+                console.log(`[DEBUG] Found SSC row in underGraduate.list at index ${i} (reqConfId=${rowReqConfId}). Patching...`);
                 const sscPatch: any = {
                   ...academicValues,
                   gradingSystem: 'percentage',
@@ -10901,7 +10978,7 @@ export class SharedAdmissionFormComponent implements OnInit {
                 row.patchValue(sscPatch);
                 if (ai.percentage) row.patchValue({ percentageOrCgpa: ai.percentage });
                 // Update Upload Documents section status
-                const sscDocId = docId || 182;
+                const sscDocId = docId || rowReqConfId || 182;
                 this.updateDocumentStatus(sscDocId);
                 break;
               }
@@ -10995,7 +11072,7 @@ export class SharedAdmissionFormComponent implements OnInit {
           }
         } catch (e) { console.warn('Could not patch graduate list', e); }
 
-        // Patch the underGraduate.list row with reqConfId == 183
+        // Patch the underGraduate.list row
         try {
           const underGraduateList = this.educationInfoForm.get('eduInfo.underGraduate.list') as FormArray;
           if (underGraduateList && underGraduateList.length > 0) {
@@ -11004,29 +11081,33 @@ export class SharedAdmissionFormComponent implements OnInit {
             for (let i = 0; i < underGraduateList.length; i++) {
               const row = underGraduateList.at(i);
               const rowReqConfId = row.get('reqConfId')?.value;
-              console.log(`[DEBUG] UnderGrad Row ${i} - reqConfId: ${rowReqConfId}`);
+              console.log(`[DEBUG] UnderGrad Row ${i} - reqConfId: ${rowReqConfId}, docId: ${docId}`);
 
-              if (rowReqConfId == 183) {
-                console.log(`[DEBUG] Found HSC row in underGraduate.list at index ${i} (reqConfId=183). Patching...`);
+              // Support both ID matching and index-based fallback for HSC (index 1) / SSC (index 0)
+              const isMatchById = (docId && String(rowReqConfId) == String(docId));
+              const isMatchByHsc = (isHSC && (rowReqConfId == 183 || i == 1));
+              const isMatchBySsc = (isSSC && (rowReqConfId == 182 || i == 0));
+
+              if (isMatchById || isMatchByHsc || isMatchBySsc) {
+                console.log(`[DEBUG] Patching underGraduate.list at index ${i}. Match Type: ${isMatchById ? 'ID' : (isMatchByHsc ? 'HSC' : 'SSC')}`);
                 row.patchValue(genericPatch);
+                
+                // Explicitly patch seatNo and schoolName again just in case genericPatch was shadowed
+                if (academicValues.seatNo) row.get('seatNo')?.patchValue(academicValues.seatNo);
+                if (academicValues.schoolName) row.get('schoolName')?.patchValue(academicValues.schoolName);
                 if (ai.percentage) row.patchValue({ percentageOrCgpa: ai.percentage });
+                
                 // Update Upload Documents section status
-                const hscDocId = docId || 183;
-                this.updateDocumentStatus(hscDocId);
+                const finalDocId = docId || rowReqConfId || (isHSC ? 183 : (isSSC ? 182 : null));
+                if (finalDocId) this.updateDocumentStatus(finalDocId);
+                
                 dataPatched = true;
-                break;
-              }
-            }
-
-            if (!dataPatched) {
-              console.warn('[DEBUG] Could not find reqConfId=183 HSC row. Falling back to index 1 if available.');
-              if (underGraduateList.length > 1) {
-                underGraduateList.at(1).patchValue(genericPatch);
-                if (ai.percentage) underGraduateList.at(1).patchValue({ percentageOrCgpa: ai.percentage });
+                if (isMatchById) break; // If we matched by specific ID, we stop. Else we might loop.
               }
             }
           }
-        } catch (e) { console.warn('Could not patch underGraduate HSC row', e); }
+        } catch (e) { console.warn('Could not patch underGraduate list', e); }
+
 
       } else {
         // --- FALLBACKS (Semester Marksheets, Degree, Diploma, etc.) ---
@@ -11159,7 +11240,7 @@ export class SharedAdmissionFormComponent implements OnInit {
 
     // 3. Update Document Status (for the document that was actually uploaded, if known)
     if (docId) {
-      this.updateDocumentStatus(docId);
+      this.updateDocumentStatus(docId, uploadedFileName);
     }
 
     // Trigger change detection implicitly by Angular
@@ -11174,15 +11255,21 @@ export class SharedAdmissionFormComponent implements OnInit {
     let globalDocControl: any = null;
 
     // Search in documentsBunch (visual grouping)
+    const searchIds = [documentId, ...this.getDocumentFallbackIds(documentId)];
     if (this.documentsBunch) {
-      this.documentsBunch.forEach(group => {
-        group.forEach(doc => {
-          if (doc.value.docId == documentId) {
-            docTitle = doc.value.docTitle;
-            globalDocControl = doc;
+      for (const id of searchIds) {
+        for (const group of this.documentsBunch) {
+          for (const doc of group) {
+            if (doc.value.docId == id) {
+              docTitle = doc.value.docTitle;
+              globalDocControl = doc;
+              break;
+            }
           }
-        });
-      });
+          if (globalDocControl) break;
+        }
+        if (globalDocControl) break;
+      }
     }
 
     if (globalDocControl) {
@@ -11208,30 +11295,62 @@ export class SharedAdmissionFormComponent implements OnInit {
 
     if (!docTitle) {
       console.warn('[DEBUG] Could not find document title in global list for ID:', documentId);
-      // Fallback: If title not found, continue without throwing exception
-      // The document might have been added dynamically or is missing from config
-      docTitle = 'Unknown Document (' + documentId + ')';
+      // Fallback: Try HSC/SSC ID overlay if we have alternate known ids
+      const alternateIds = this.getDocumentFallbackIds(documentId);
+      for (const altId of alternateIds) {
+        if (altId === documentId) continue;
+        const altControl = this.documentsForm.get('documents')?.value?.find((d: any) => d.docId === altId);
+        if (altControl) {
+          docTitle = altControl.docTitle;
+          break;
+        }
+      }
+      if (!docTitle) {
+        docTitle = 'Unknown Document (' + documentId + ')';
+      }
     }
 
     // 1b. Self-Update: Ensure the document itself is marked as uploaded in the global list
     // This is crucial if this method is called via patchExtractedData (e.g. detected 12th marksheet updates ID 1)
     if (globalDocControl) {
-      if (!globalDocControl.get('isUploaded')?.value || uploadedFileName) {
+      const shouldUpdate = !globalDocControl.get('isUploaded')?.value || !!uploadedFileName;
+      let finalFileName: any = globalDocControl.get('uploadedFile')?.value || globalDocControl.get('docToUpload')?.value;
+
+      if (shouldUpdate) {
         console.log(`Auto-updating global doc status for ID ${documentId}`);
+
         const patchValues: any = {
           isUploaded: true,
-          docError: false
+          docError: false,
+          isBrowsed: true
         };
 
-        if (uploadedFileName) {
-          patchValues.uploadedFile = uploadedFileName;
-          patchValues.docToUpload = uploadedFileName;
-          const ext = uploadedFileName.toLowerCase().split('.').pop();
-          patchValues.hasPhoto = ext === 'pdf' ? this.defaultPdfImage : uploadedFileName;
+        finalFileName = uploadedFileName || finalFileName;
+        if (finalFileName) {
+          patchValues.uploadedFile = finalFileName;
+          patchValues.docToUpload = finalFileName;
+          const ext = (finalFileName || '').toLowerCase().split('.').pop();
+          patchValues.hasPhoto = (ext === 'pdf') ? this.defaultPdfImage : finalFileName;
         }
 
         globalDocControl.patchValue(patchValues);
+
+        // Force value sync and update child controls for final visual refresh
+        globalDocControl.markAsDirty({ onlySelf: true });
+        globalDocControl.updateValueAndValidity({ emitEvent: false });
       }
+
+      // Redundantly ensure contains document status for educational section
+      if (globalDocControl.get('docTitle')?.value && this.isHscOrSscDoc(globalDocControl.get('docTitle').value)) {
+        const hscDocId = globalDocControl.get('docId')?.value || documentId;
+        if (hscDocId) {
+          this.updateEduListRowUploadStatus(hscDocId, finalFileName);
+        }
+      }
+
+      // Also sync the corresponding flat form row for document list update.
+      this.syncDocumentFormRow(documentId, finalFileName);
+      this.syncDocumentFormRowForHSC(documentId, finalFileName);
     }
 
     console.log(`Found Document Title: ${docTitle}`);
@@ -11249,13 +11368,22 @@ export class SharedAdmissionFormComponent implements OnInit {
         list.controls.forEach(control => {
           // Check if this row has a document upload requirement
           if (control.get('showDocumentUpload')?.value) {
-            // Logic: If the document title contains "Graduation" and we are in 'graduate' section, etc.
-            // This is heuristic.
+            // Logic: Match by Direct ID (Primary) or Title Heuristic (Secondary)
             let match = false;
-            if (section === 'graduate' && (titleLower.includes('graduation') || titleLower.includes('degree'))) match = true;
-            if (section === 'postGraduate' && titleLower.includes('post graduate')) match = true;
-            if (section === 'masterGraduate' && titleLower.includes('master')) match = true;
-            if (section === 'underGraduate' && titleLower.includes('under graduate')) match = true;
+            const rowReqConfId = control.get('reqConfId')?.value;
+            
+            if (rowReqConfId && rowReqConfId == documentId) {
+              match = true;
+              console.log(`[SYNC] Direct ID match found for ID ${documentId} in ${section} list`);
+            } else if (section === 'graduate' && (titleLower.includes('graduation') || titleLower.includes('degree'))) {
+              match = true;
+            } else if (section === 'postGraduate' && titleLower.includes('post graduate')) {
+              match = true;
+            } else if (section === 'masterGraduate' && titleLower.includes('master')) {
+              match = true;
+            } else if (section === 'underGraduate' && titleLower.includes('under graduate')) {
+              match = true;
+            }
 
             if (match) {
               console.log(`Syncing ${docTitle} with ${section} list item`);
@@ -11379,7 +11507,161 @@ export class SharedAdmissionFormComponent implements OnInit {
     return null;
   }
 
+  private getDocumentFallbackIds(documentId: any): number[] {
+    const hscIds = [183, 288];
+    const sscIds = [182];
+    const id = Number(documentId);
 
+    if (!Number.isNaN(id) && hscIds.includes(id)) {
+      return hscIds;
+    }
 
+    if (!Number.isNaN(id) && sscIds.includes(id)) {
+      return sscIds;
+    }
+
+    // fallback by title scanning if ids unknown
+    if (this.documentsBunch) {
+      for (const group of this.documentsBunch) {
+        for (const doc of group) {
+          const title = (doc.value.docTitle || '').toString().toLowerCase();
+          if (title.includes('hsc') || title.includes('12th')) {
+            return hscIds;
+          }
+          if (title.includes('ssc') || title.includes('10th')) {
+            return sscIds;
+          }
+        }
+      }
+    }
+
+    return [];
+  }
+
+  private ensureAiDocumentConfigRows(existingDocs: any[], aiConfig: any): any[] {
+    if (!Array.isArray(existingDocs)) existingDocs = [];
+
+    const newDocs = [...existingDocs];
+
+    // We may receive aiDocumentVerification as boolean/array. For array, ensure required rows exist.
+    const aiList = Array.isArray(aiConfig) ? aiConfig : [];
+
+    // Built-in known doc mapping for id/title loyalty.
+    const knownDocs: any = {
+      183: {docId: 183, docTitle: 'HSC Marksheet', required: true},
+      288: {docId: 288, docTitle: '(12th) HSC Mark sheet', required: true},
+      182: {docId: 182, docTitle: 'SSC Marksheet', required: true}
+    };
+
+    const existingIds = newDocs.map(d => Number(d.docId));
+
+    aiList.forEach((item: any) => {
+      if (item?.show) {
+        const docId = Number(item.document_id || item.docId);
+        if (!Number.isNaN(docId) && !existingIds.includes(docId)) {
+          // Add missing AI doc to upload docs list
+          const candidate = knownDocs[docId] || {
+            docId: docId,
+            docTitle: item.document_name || `Document ${docId}`,
+            required: true
+          };
+          console.log('[DOCUMENTS] Adding missing AI document row:', candidate);
+          newDocs.push({ ...candidate, uploadedFile: null });
+          existingIds.push(docId);
+        }
+      }
+    });
+
+    return newDocs;
+  }
+
+  private syncDocumentFormRow(documentId: any, uploadedFileName?: string) {
+    if (!documentId || !this.documentsForm) {
+      return;
+    }
+
+    const docsArray = this.documentsForm.get('documents') as FormArray;
+    if (!docsArray || docsArray.length === 0) {
+      return;
+    }
+
+    const searchIds = [documentId, ...this.getDocumentFallbackIds(documentId)];
+
+    for (const id of searchIds) {
+      for (let i = 0; i < docsArray.length; i++) {
+        const control = docsArray.at(i);
+        if (control.get('docId')?.value == id) {
+          const existingUploadedFile = control.get('uploadedFile')?.value || control.get('docToUpload')?.value;
+          const finalFileName = uploadedFileName || existingUploadedFile;
+
+          const patchValues: any = {
+            isUploaded: true,
+            isBrowsed: true,
+            docError: false
+          };
+
+          if (finalFileName) {
+            patchValues.uploadedFile = finalFileName;
+            patchValues.docToUpload = finalFileName;
+
+            const ext = (finalFileName || '').toString().toLowerCase().split('.').pop();
+            patchValues.hasPhoto = ext === 'pdf' ? this.defaultPdfImage : finalFileName;
+          }
+
+          control.patchValue(patchValues, { emitEvent: false });
+          control.markAsDirty({ onlySelf: true });
+          control.updateValueAndValidity({ emitEvent: false });
+
+          console.log(`[DEBUG] syncDocumentFormRow: Document ${documentId} synced with file ${finalFileName}`);
+          return;
+        }
+      }
+    }
+
+    console.warn(`[DEBUG] syncDocumentFormRow: Could not find document row for ID ${documentId}`);
+  }
+
+  private syncDocumentFormRowForHSC(documentId: any, uploadedFileName?: string) {
+    const hscIds = [183, 288];
+    const targetIds = hscIds.includes(Number(documentId)) ? hscIds : [];
+
+    if (targetIds.length > 0) {
+      targetIds.forEach(id => {
+        if (id != documentId) {
+          this.syncDocumentFormRow(id, uploadedFileName);
+        }
+      });
+    }
+  }
+
+  public findDocumentTitleById(documentId: any): string {
+    if (!documentId) return '';
+    console.log('[DEBUG] Searching for document title by ID:', documentId);
+
+    const docsArray = this.documentsForm?.get('documents') as UntypedFormArray;
+    if (docsArray) {
+      for (let i = 0; i < docsArray.length; i++) {
+        const control = docsArray.at(i);
+        if (control.get('docId')?.value == documentId) {
+          const title = control.get('docTitle')?.value || '';
+          console.log(`[DEBUG] Found title for ID ${documentId}: ${title}`);
+          return title;
+        }
+      }
+    }
+
+    // fallback search in bunch
+    if (this.documentsBunch) {
+      for (const group of this.documentsBunch) {
+        for (const doc of group) {
+          if (doc.value.docId == documentId) {
+            return doc.value.docTitle || '';
+          }
+        }
+      }
+    }
+
+    return '';
+  }
 
 }

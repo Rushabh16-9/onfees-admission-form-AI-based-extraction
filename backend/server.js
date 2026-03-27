@@ -100,6 +100,7 @@ Return ONLY a valid JSON object with this exact structure. No markdown, no expla
 {
   "notAMarksheet": false,
   "invalidReason": "",
+  "identifiedDocumentType": "",
   "personalInfo": {
     "firstName": "",
     "middleName": "",
@@ -139,6 +140,7 @@ Return ONLY a valid JSON object with this exact structure. No markdown, no expla
 }
 
 Rules:
+- identifiedDocumentType: You MUST classify the document type in this field. Output EXACTLY one of: "SSC/10th", "HSC/12th", "Semester X" (replace X with the number), "Degree", "Diploma", or "Unknown". Look carefully at the keywords like Secondary, Higher Secondary, SSC, HSC, or Semester.
 - notAMarksheet: set true ONLY if the document is completely unrelated or explicitly a mismatch for "${expectedDocType || 'Marksheet'}" (e.g., uploading HSC when SSC is requested). Treat semester marksheets valid if "Semester" or "Degree" is expected.
 - invalidReason: short explanation if notAMarksheet is true.
 - examination: 'HSC', 'SSC', 'Diploma', 'Degree', or the specific exam name.
@@ -201,20 +203,42 @@ CANDIDATE NAME EXTRACTION (CRITICAL RULES):
             const parsed = JSON.parse(content);
 
             const expectedText = (expectedDocType || '').toString().toLowerCase();
-            const expectedSem = /\b(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(expectedText)
-                ? '1'
-                : /\b(sem|semester|semister)\s*[-_]?\s*(2|ii)\b/.test(expectedText)
-                    ? '2'
-                    : '';
+            const expectedSem = /\b(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(expectedText) ? '1' : /\b(sem|semester|semister)\s*[-_]?\s*(2|ii)\b/.test(expectedText) ? '2' : '';
             const examText = (parsed?.academicInfo?.examination || '').toString().toLowerCase();
+            const identifiedType = (parsed?.identifiedDocumentType || '').toString().toUpperCase();
+            
+            // Extract semester from wherever possible
             const extractedSem = (parsed?.academicInfo?.semester || '').toString().trim()
-                || (/\b(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(examText)
-                    ? '1'
-                    : /\b(sem|semester|semister)\s*[-_]?\s*(2|ii)\b/.test(examText)
-                        ? '2'
-                        : '');
+                || (/\b(sem|semester|semister)\s*[-_]?\s*(1|i)\b/.test(examText) ? '1' : /\b(sem|semester|semister)\s*[-_]?\s*(2|ii)\b/.test(examText) ? '2' : '')
+                || (identifiedType.includes('SEMESTER 1') ? '1' : identifiedType.includes('SEMESTER 2') ? '2' : '');
 
-            if (expectedSem && extractedSem && expectedSem !== extractedSem) {
+            const isExpectedSsc = /\b(ssc|10th|tenth|10\s*th|secondary)\b/.test(expectedText) && !/\bhigher\b/.test(expectedText);
+            const isExpectedHsc = /\b(hsc|12th|twelfth|12\s*th|higher\s*secondary)\b/.test(expectedText);
+            
+            const isExtractedSsc = identifiedType.includes('SSC') || identifiedType.includes('10TH') || (/\b(ssc|10th|tenth|10\s*th|secondary)\b/.test(examText) && !/\bhigher\b/.test(examText));
+            const isExtractedHsc = identifiedType.includes('HSC') || identifiedType.includes('12TH') || /\b(hsc|12th|twelfth|12\s*th|higher\s*secondary)\b/.test(examText);
+
+            // 1. Cross-matching SSC vs HSC
+            if (isExpectedSsc && isExtractedHsc && !isExtractedSsc) {
+                parsed.notAMarksheet = true;
+                parsed.invalidReason = `Uploaded document appears to be an HSC (12th) marksheet, but an SSC (10th) marksheet is required.`;
+            } else if (isExpectedHsc && isExtractedSsc && !isExtractedHsc) {
+                parsed.notAMarksheet = true;
+                parsed.invalidReason = `Uploaded document appears to be an SSC (10th) marksheet, but an HSC (12th) marksheet is required.`;
+            } 
+            // 2. Cross-matching Semesters vs Schools
+            else if (expectedSem && (isExtractedSsc || isExtractedHsc)) {
+                parsed.notAMarksheet = true;
+                const foundType = isExtractedSsc ? 'SSC' : 'HSC';
+                parsed.invalidReason = `Uploaded document appears to be an ${foundType} marksheet, but a Semester ${expectedSem} marksheet is required.`;
+            } 
+            else if ((isExpectedSsc || isExpectedHsc) && extractedSem) {
+                parsed.notAMarksheet = true;
+                const expectedType = isExpectedSsc ? 'SSC (10th)' : 'HSC (12th)';
+                parsed.invalidReason = `Uploaded document appears to be a Semester marksheet, but an ${expectedType} marksheet is required.`;
+            }
+            // 3. Existing Sem vs Sem mismatch
+            else if (expectedSem && extractedSem && expectedSem !== extractedSem) {
                 parsed.notAMarksheet = true;
                 parsed.invalidReason = `Uploaded document is Semester ${extractedSem} marksheet, but Semester ${expectedSem} marksheet is required.`;
             }
@@ -318,25 +342,40 @@ app.post('/api/verify-document', uploadMiddleware, async (req, res) => {
         const expectedType = req.body.expectedType || 'Document';
         console.log(`Verifying document is a genuine: ${expectedType}...`);
 
-        const imageBuffer = req.file.buffer;
-        const mimeType = req.file.mimetype || 'image/jpeg';
+        let imageBuffer = req.file.buffer;
+        let mimeType = req.file.mimetype || 'image/jpeg';
+
+        // If the uploaded file is a PDF, convert first page to image for AI vision
+        if (mimeType === 'application/pdf') {
+            console.log('PDF detected for verify-document — converting to image...');
+            imageBuffer = await pdfToImage(imageBuffer);
+            mimeType = 'image/jpeg';
+        }
+
         const base64Image = imageBuffer.toString('base64');
 
-        const prompt = `You are a strict Indian college admission auditor. 
-Analyze this image and determine if it is a genuine, legible "${expectedType}".
+        const prompt = `You are a strict Indian college admission auditor with a zero-tolerance policy for incorrect document uploads. 
+Your task is to analyze this image and determine if it is a genuine, legible "${expectedType}".
+
+CRITICAL RULE: The uploaded document MUST EXACTLY MATCH the requested type: "${expectedType}".
+If the document is a different type of document (e.g., if you are expecting an "Aadhaar Card" but the user uploaded a "Marksheet", "Ration Card", "Bank Statement", or "Blank Form"), you MUST reject it.
 
 A VALID document must:
-- Clearly appear to be a "${expectedType}"
-- Be readable and not excessively blurry
+- Clearly and unambiguously be a "${expectedType}". For example, if it's an Aadhaar Card, it must have the word "Aadhaar", the logo, and a 12-digit number.
+- Visually match the standard layout of a "${expectedType}".
+- Be readable and not excessively blurry.
 
-INVALID examples:
+INVALID examples (must fail validation):
+- A document of the WRONG type (e.g. uploading a Marksheet when an Aadhaar Card is expected).
 - Photos of random objects, fruits, people, scenery, or completely unrelated documents.
+- A blank form without filled details.
+- A handwritten note or unrelated screenshot.
 
-Return ONLY a JSON object:
+Return ONLY a JSON object. Ensure you provide a clear reason if it is rejected:
 {
   "isValid": true or false,
   "confidence": number between 0 and 100,
-  "reason": "explanation of why it is valid or invalid"
+  "reason": "If invalid, explain exactly why (e.g. 'This is a HSC Marksheet, not an Aadhaar Card'). If valid, say 'Valid'."
 }`;
 
         const chatCompletion1 = await groq.chat.completions.create({
@@ -357,13 +396,23 @@ Return ONLY a JSON object:
 
         console.log(`Document verification result for ${expectedType}:`, parsed1);
 
+        // Enforce a confidence threshold: even if AI says isValid=true, reject if confidence is low
+        const CONFIDENCE_THRESHOLD = 70;
+        const confidence = typeof parsed1.confidence === 'number' ? parsed1.confidence : 0;
+        const isValid = parsed1.isValid === true && confidence >= CONFIDENCE_THRESHOLD;
+        const reason = isValid ? (parsed1.reason || 'Valid') : (parsed1.reason || `Confidence too low (${confidence}%). Please upload a clearer image of ${expectedType}.`);
+
+        if (!isValid) {
+            console.log(`Document REJECTED for ${expectedType}: confidence=${confidence}, isValid=${parsed1.isValid}, reason=${reason}`);
+        }
+
         res.json({
             success: true,
             verification: {
-                isValid: parsed1.isValid === true,
-                confidence: parsed1.confidence || 0,
+                isValid,
+                confidence,
                 documentType: expectedType,
-                reason: parsed1.reason || ''
+                reason
             }
         });
     } catch (error) {
@@ -373,6 +422,7 @@ Return ONLY a JSON object:
         });
     }
 });
+
 
 // Endpoint: Validate signature using Groq AI
 app.post('/api/validate-signature', uploadMiddleware, async (req, res) => {

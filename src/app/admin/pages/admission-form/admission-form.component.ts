@@ -91,9 +91,9 @@ export class AdmissionFormComponent implements OnInit {
       // broad boolean enable — fallback to read from JSON file
       this._admissionService.getRequiredDocuments().subscribe(
         (requiredDocuments: any[]) => {
-          const docToUpload = requiredDocuments.find(doc => doc.show);
-          if (docToUpload) {
-            this.openUploadDialog(docToUpload);
+          const aiList = requiredDocuments.filter(doc => doc.show);
+          if (aiList.length > 0) {
+            this.openUploadDialog(aiList);
           }
         },
         (error) => { console.error('AdmissionForm: Failed to fetch required documents:', error); }
@@ -102,15 +102,15 @@ export class AdmissionFormComponent implements OnInit {
     }
 
     if (aiDocList.length > 0) {
-      this.openUploadDialog(aiDocList[0]);
+      this.openUploadDialog(aiDocList);
     }
   }
 
-  openUploadDialog(document: any) {
-    console.log('AdmissionForm: openUploadDialog called with:', document);
+  openUploadDialog(documents: any[]) {
+    console.log('AdmissionForm: openUploadDialog called with:', documents);
     const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
-      width: '600px',
-      data: document,
+      width: '800px',
+      data: { documents: documents },
       disableClose: true
     });
 
@@ -118,89 +118,108 @@ export class AdmissionFormComponent implements OnInit {
       console.log('AdmissionForm: Dialog opened successfully');
     });
 
-    dialogRef.afterClosed().subscribe(result => {
+    dialogRef.afterClosed().subscribe((result: any) => {
       console.log('AdmissionForm: Dialog closed with result:', result);
-      if (result && result.success) {
-        // Dual upload flow returns already-uploaded filenames and both extracted payloads.
-        if (result.sem1Data || result.fileName) {
-          const sem1DocId = result?.sem1Data?.document_id || 390;
-          const sem2DocId = result?.sem2_document_id || result?.document_id || 389;
 
-          if (this.sharedAdmissionForm) {
-            const sem1FileName = result?.sem1Data?.fileName;
-            if (sem1FileName) {
-              this.sharedAdmissionForm.updateDocumentStatus(sem1DocId, sem1FileName);
-              this.sharedAdmissionForm.updateEduListRowUploadStatus(sem1DocId, sem1FileName);
-              this.sharedAdmissionForm.uploadedFileNames.push(sem1FileName);
-            }
-            if (result?.sem1Data?.extractedData) {
-              this.autoFillFormWithExtractedData(result.sem1Data.extractedData, sem1DocId, sem1FileName);
-            }
+      if (!(result && result.success)) {
+        return;
+      }
 
-            if (result.fileName) {
-              this.sharedAdmissionForm.updateDocumentStatus(sem2DocId, result.fileName);
-              this.sharedAdmissionForm.updateEduListRowUploadStatus(sem2DocId, result.fileName);
-              this.sharedAdmissionForm.uploadedFileNames.push(result.fileName);
-            }
-            if (result.extractedData) {
-              this.autoFillFormWithExtractedData(result.extractedData, sem2DocId, result.fileName);
-            }
+      // Dual upload flow returns already-uploaded filenames and both extracted payloads.
+      if (result.sem1Data || result.fileName) {
+        const sem1DocId = result?.sem1Data?.document_id || 390;
+        const sem2DocId = result?.sem2_document_id || result?.document_id || 389;
+
+        if (this.sharedAdmissionForm) {
+          const sem1FileName = result?.sem1Data?.fileName;
+          if (sem1FileName) {
+            this.sharedAdmissionForm.updateDocumentStatus(sem1DocId, sem1FileName);
+            this.sharedAdmissionForm.updateEduListRowUploadStatus(sem1DocId, sem1FileName);
+            this.sharedAdmissionForm.uploadedFileNames.push(sem1FileName);
+          }
+          if (result?.sem1Data?.extractedData) {
+            this.autoFillFormWithExtractedData(result.sem1Data.extractedData, sem1DocId, sem1FileName);
           }
 
-          this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar('Sem 1 & Sem 2 data auto-filled successfully.', 'x', 'success-snackbar', 5000);
-          return;
+          if (result.fileName) {
+            this.sharedAdmissionForm.updateDocumentStatus(sem2DocId, result.fileName);
+            this.sharedAdmissionForm.updateEduListRowUploadStatus(sem2DocId, result.fileName);
+            this.sharedAdmissionForm.uploadedFileNames.push(result.fileName);
+          }
+          if (result.extractedData) {
+            this.autoFillFormWithExtractedData(result.extractedData, sem2DocId, result.fileName);
+          }
         }
 
-        if (!result.file) {
-          return;
-        }
+        this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar('Sem 1 & Sem 2 data auto-filled successfully.', 'x', 'success-snackbar', 5000);
+        return;
+      }
 
-        console.log('Document upload verified, proceeding to upload file:', result.file?.name);
+      // Handle the new generic bulk array case
+      if (result.documents && Array.isArray(result.documents)) {
+        const docsToUpload = result.documents.filter((d: any) => d.file != null);
+        
+        if (docsToUpload.length === 0) return;
 
-        const docId = this.resolveDocumentId(result, document);
-        const file = result.file;
-        const ext = file.name.toLowerCase().split('.').pop();
-
+        console.log(`[DIALOG UPLOAD] Beginning bulk upload for ${docsToUpload.length} documents`);
         this.allEventEmitters.showLoader.emit(true);
-        console.log('[DIALOG UPLOAD] Uploading file to server, docId:', docId, 'fileType:', ext);
+        let completedCount = 0;
+        
+        docsToUpload.forEach((doc: any) => {
+           const docId = this.resolveDocumentId(doc, doc);
+           const file = doc.file;
+           const ext = file.name.toLowerCase().split('.').pop();
+           
+           console.log('[DIALOG UPLOAD] Uploading file to server, docId:', docId, 'fileType:', ext);
 
-        const uploadObservable = ext === 'pdf'
-          ? this._admissionService.uploadPdf(file, docId)
-          : this._admissionService.uploadDocImage({ docId: docId, docValue: file });
+           const uploadObservable = ext === 'pdf'
+             ? this._admissionService.uploadPdf(file, docId)
+             : this._admissionService.uploadDocImage({ docId: docId, docValue: file });
 
-        uploadObservable.subscribe(
-          response => {
-            this.allEventEmitters.showLoader.emit(false);
-            console.log('[DIALOG UPLOAD] Server upload response:', response);
+           uploadObservable.subscribe(
+             response => {
+               completedCount++;
+               if (response.status == 1 || response.status == '1') {
+                 const fileName = response.dataJson?.fileName;
+                 console.log('[DIALOG UPLOAD] Upload successful, fileName:', fileName);
 
-            if (response.status == 1 || response.status == '1') {
-              const fileName = response.dataJson?.fileName;
-              console.log('[DIALOG UPLOAD] Upload successful, fileName:', fileName);
-
-              if (this.sharedAdmissionForm) {
-                this.sharedAdmissionForm.updateDocumentStatus(docId, fileName);
-                if (fileName) {
-                  this.sharedAdmissionForm.uploadedFileNames.push(fileName);
-                }
-              }
-
-              if (result.extractedData) {
-                this.autoFillFormWithExtractedData(result.extractedData, docId, fileName);
-              }
-
-              const successMsg = response.message || 'Document uploaded successfully';
-              this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar(successMsg, 'x', 'success-snackbar', 5000);
-            } else {
-              const failMsg = response.message || 'Upload failed';
-              this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar(failMsg, 'x', 'error-snackbar', 5000);
-            }
-          },
-          error => {
-            this.allEventEmitters.showLoader.emit(false);
-            console.error('[DIALOG UPLOAD] Upload error:', error);
-            this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar('Upload failed. Please try again.', 'x', 'error-snackbar', 5000);
-          }
-        );
+                 if (this.sharedAdmissionForm) {
+                   this.sharedAdmissionForm.updateDocumentStatus(docId, fileName);
+                   this.sharedAdmissionForm.updateEduListRowUploadStatus(docId, fileName);
+                   if (fileName) {
+                     this.sharedAdmissionForm.uploadedFileNames.push(fileName);
+                   }
+                 }
+                 if (doc.extractedData) {
+                   this.autoFillFormWithExtractedData(doc.extractedData, docId, fileName);
+                 }
+                 this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar(response.message || 'Document uploaded successfully', 'x', 'success-snackbar', 5000);
+               } else {
+                 const failMsg = response.message || 'Upload failed';
+                 this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar(failMsg, 'x', 'error-snackbar', 5000);
+               }
+               
+               if (completedCount === docsToUpload.length) {
+                 this.allEventEmitters.showLoader.emit(false);
+                 setTimeout(() => {
+                   this.sharedAdmissionForm?.loadDocumentsList();
+                 }, 500);
+               }
+             },
+             error => {
+               completedCount++;
+               console.error('[DIALOG UPLOAD] Upload error:', error);
+               this.sharedAdmissionForm?._snackBarMsgComponent?.openSnackBar('Upload failed. Please try again.', 'x', 'error-snackbar', 5000);
+               
+               if (completedCount === docsToUpload.length) {
+                 this.allEventEmitters.showLoader.emit(false);
+                 setTimeout(() => {
+                   this.sharedAdmissionForm?.loadDocumentsList();
+                 }, 500);
+               }
+             }
+           );
+        });
       }
     });
   }

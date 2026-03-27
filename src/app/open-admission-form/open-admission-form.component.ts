@@ -79,9 +79,9 @@ export class OpenAdmissionFormComponent implements OnInit {
       // broad boolean enable — fallback to read from JSON file
       this._admissionService.getRequiredDocuments().subscribe(
         (requiredDocuments: any[]) => {
-          const docToUpload = requiredDocuments.find(doc => doc.show);
-          if (docToUpload) {
-            this.openUploadDialog(docToUpload);
+          const aiList = requiredDocuments.filter(doc => doc.show);
+          if (aiList.length > 0) {
+            this.openUploadDialog(aiList);
           }
         },
         (error) => { console.error('OpenAdmissionForm: Failed to fetch required documents:', error); }
@@ -90,18 +90,18 @@ export class OpenAdmissionFormComponent implements OnInit {
     }
 
     if (aiDocList.length > 0) {
-      this.openUploadDialog(aiDocList[0]);
+      this.openUploadDialog(aiDocList);
     }
   }
 
-  openUploadDialog(document: any) {
+  openUploadDialog(documents: any[]) {
     const dialogRef = this.dialog.open(DocumentUploadDialogComponent, {
-      width: '600px',
-      data: document,
+      width: '800px',
+      data: { documents: documents },
       disableClose: true
     });
 
-    dialogRef.afterClosed().subscribe(result => {
+    dialogRef.afterClosed().subscribe((result: any) => {
       if (!(result && result.success)) {
         return;
       }
@@ -134,39 +134,53 @@ export class OpenAdmissionFormComponent implements OnInit {
         return;
       }
 
-      if (!result.file) {
-        return;
+      // Handle the new generic bulk array case
+      if (result.documents && Array.isArray(result.documents)) {
+        const docsToUpload = result.documents.filter((d: any) => d.file != null);
+        
+        if (docsToUpload.length === 0) return;
+
+        this.allEventEmitters.showLoader.emit(true);
+        let completedCount = 0;
+        
+        docsToUpload.forEach((doc: any) => {
+           const docId = this.resolveDocumentId(doc, doc);
+           const file = doc.file;
+           const ext = file.name.toLowerCase().split('.').pop();
+           
+           const uploadObservable = ext === 'pdf'
+             ? this._admissionService.uploadPdf(file, docId)
+             : this._admissionService.uploadDocImage({ docId: docId, docValue: file });
+
+           uploadObservable.subscribe(
+             response => {
+               completedCount++;
+               if (response.status == 1 || response.status == '1') {
+                 const fileName = response.dataJson?.fileName;
+                 if (this.sharedAdmissionForm) {
+                   this.sharedAdmissionForm.updateDocumentStatus(docId, fileName);
+                   this.sharedAdmissionForm.updateEduListRowUploadStatus(docId, fileName);
+                   if (fileName) {
+                     this.sharedAdmissionForm.uploadedFileNames.push(fileName);
+                   }
+                 }
+                 if (doc.extractedData) {
+                   this.autoFillFormWithExtractedData(doc.extractedData, docId, fileName);
+                 }
+               }
+               if (completedCount === docsToUpload.length) {
+                 this.allEventEmitters.showLoader.emit(false);
+               }
+             },
+             () => {
+               completedCount++;
+               if (completedCount === docsToUpload.length) {
+                 this.allEventEmitters.showLoader.emit(false);
+               }
+             }
+           );
+        });
       }
-
-      const docId = this.resolveDocumentId(result, document);
-      const file = result.file;
-      const ext = file.name.toLowerCase().split('.').pop();
-
-      this.allEventEmitters.showLoader.emit(true);
-      const uploadObservable = ext === 'pdf'
-        ? this._admissionService.uploadPdf(file, docId)
-        : this._admissionService.uploadDocImage({ docId: docId, docValue: file });
-
-      uploadObservable.subscribe(
-        response => {
-          this.allEventEmitters.showLoader.emit(false);
-          if (response.status == 1 || response.status == '1') {
-            const fileName = response.dataJson?.fileName;
-            if (this.sharedAdmissionForm) {
-              this.sharedAdmissionForm.updateDocumentStatus(docId, fileName);
-              if (fileName) {
-                this.sharedAdmissionForm.uploadedFileNames.push(fileName);
-              }
-            }
-            if (result.extractedData) {
-              this.autoFillFormWithExtractedData(result.extractedData, docId, fileName);
-            }
-          }
-        },
-        () => {
-          this.allEventEmitters.showLoader.emit(false);
-        }
-      );
     });
   }
 

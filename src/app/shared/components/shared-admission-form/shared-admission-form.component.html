@@ -6604,8 +6604,7 @@
                     style="cursor: default;" alt="browsedDoc">
                   <input type="file" [hidden]="false" (change)="docBunchUrl($event, k, i)"
                     accept=".png, .jpg, .jpeg, .pdf" style="margin-top: 5px;">
-                  <div *ngIf="itemrow.get('isUploaded').value && isHscOrSscDoc(itemrow.get('docTitle').value)"
-                    class="upload-status">
+                  <div *ngIf="itemrow.get('isUploaded').value" class="upload-status">
                     <span class="file-name">{{getUploadedFileName(itemrow)}}</span>
                     <span class="uploaded-label">Uploaded</span>
                   </div>
